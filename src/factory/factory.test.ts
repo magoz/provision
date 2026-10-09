@@ -62,7 +62,10 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
       await writeFile(
         registry,
         JSON.stringify({
-          factories: { acme: { vault: 'provision-factory-acme', item: 'provision' } }
+          factories: {
+            acme: { vault: 'provision-factory-acme', item: 'provision', githubOwner: 'acme' },
+            other: { vault: 'provision-factory-other', item: 'provision', githubOwner: 'other' }
+          }
         })
       )
     })
@@ -191,6 +194,12 @@ describe('provision factory', () => {
         readFile(join(repo, '.vercel', 'project.json'), 'utf8')
       )
       expect(link).toContain(project?.id ?? 'missing')
+
+      // Selection by the recorded owner reads only this factory's item.
+      const vaults = invocations
+        .filter(invocation => invocation.command === 'op')
+        .map(invocation => invocation.args[invocation.args.indexOf('--vault') + 1])
+      expect(vaults).toEqual(['provision-factory-acme'])
 
       // Secrets travel through stdin and HTTP headers only, never process arguments.
       const argv = JSON.stringify(invocations.map(invocation => invocation.args))

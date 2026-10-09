@@ -30,7 +30,9 @@ const FactoryName = Schema.String.check(Schema.isPattern(factoryNamePattern))
 export const FactoryEntry = Schema.Struct({
   vault: Schema.NonEmptyString,
   item: Schema.NonEmptyString,
-  account: Schema.optionalKey(Schema.NonEmptyString)
+  account: Schema.optionalKey(Schema.NonEmptyString),
+  /** Copied from the item by `config add`, so selecting a factory reads only that factory's item. */
+  githubOwner: Schema.optionalKey(Schema.NonEmptyString)
 })
 
 export type FactoryEntry = typeof FactoryEntry.Type

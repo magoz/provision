@@ -64,8 +64,8 @@ describe('stored service-account token', () => {
       )
 
       yield* Effect.gen(function* () {
-        yield* storeServiceAccountToken(Redacted.make(token))
-        const auth = yield* resolveOpAuth
+        yield* storeServiceAccountToken('acme', Redacted.make(token))
+        const auth = yield* resolveOpAuth('acme')
         expect(auth.kind).toBe('credential')
       }).pipe(Effect.provide(layer))
 
@@ -104,10 +104,10 @@ describeSystemdCreds('systemd-creds', () => {
       )
 
       const resolved = yield* Effect.gen(function* () {
-        const stored = yield* storeServiceAccountToken(Redacted.make(token))
+        const stored = yield* storeServiceAccountToken('acme', Redacted.make(token))
         expect((yield* Effect.promise(() => stat(stored))).mode & 0o777).toBe(0o600)
 
-        return yield* resolveOpAuth
+        return yield* resolveOpAuth('acme')
       }).pipe(Effect.provide(layer))
 
       expect(resolved.kind).toBe('credential')

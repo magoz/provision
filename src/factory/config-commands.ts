@@ -105,19 +105,22 @@ const add = Command.make(
         const vault = yield* valueOrPrompt(options.vault, '1Password vault')
         const item = yield* valueOrPrompt(options.item, '1Password item', 'provision')
 
-        const entry: FactoryEntry = Option.match(options.account, {
+        const location: FactoryEntry = Option.match(options.account, {
           onNone: () => ({ vault, item }),
           onSome: account => ({ vault, item, account })
         })
 
         // Refuse to register an item that cannot be read or is incomplete.
-        const inspected = yield* inspectFactory(entry, yield* resolveOpAuth)
+        const auth = yield* resolveOpAuth(name)
+        const inspected = yield* inspectFactory(location, auth)
         const registry = yield* readRegistry
+        const entry: FactoryEntry = { ...location, githubOwner: inspected.githubOwner }
         yield* writeRegistry({ factories: { ...registry.factories, [name]: entry } })
 
         yield* report(false, {
           status: name in registry.factories ? 'updated' : 'added',
           factory: name,
+          auth: describeAuth(auth),
           github_owner: inspected.githubOwner,
           vercel_team: inspected.vercelTeamId,
           sections: inspected.sections
@@ -174,11 +177,13 @@ const verify = Command.make(
           return yield* new RegistryError({ message: 'no matching factory registered' })
         }
 
-        const auth = yield* resolveOpAuth
-        yield* Console.log(`1Password auth: ${describeAuth(auth)}`)
-
         const results = yield* Effect.forEach(selected, ([factory, entry]) =>
-          inspectFactory(entry, auth).pipe(
+          Effect.gen(function* () {
+            const auth = yield* resolveOpAuth(factory)
+            const inspected = yield* inspectFactory(entry, auth)
+
+            return { auth: describeAuth(auth), ...inspected }
+          }).pipe(
             Effect.map(inspected => ({ factory, ok: true as const, ...inspected })),
             Effect.catch(error =>
               Effect.succeed({ factory, ok: false as const, error: error.message })
@@ -191,7 +196,7 @@ const verify = Command.make(
           for (const result of results) {
             yield* Console.log(
               result.ok
-                ? `${result.factory}: ok (github ${result.githubOwner}, vercel ${result.vercelTeamId})\n` +
+                ? `${result.factory}: ok (github ${result.githubOwner}, vercel ${result.vercelTeamId}, auth ${result.auth})\n` +
                     result.sections
                       .map(
                         section =>
@@ -226,9 +231,14 @@ const readStdin = Effect.promise(async () => {
   return Buffer.concat(chunks).toString('utf8')
 })
 
-const opTokenSet = Command.make('set', {}, () =>
+const factoryFlag = Flag.String('factory').pipe(
+  Flag.withDescription('factory the token belongs to (it may be registered afterwards)')
+)
+
+const opTokenSet = Command.make('set', { factory: factoryFlag }, ({ factory }) =>
   handled(
     Effect.gen(function* () {
+      const name = yield* validateFactoryName(factory)
       const raw =
         process.stdin.isTTY === true
           ? yield* Prompt.run(
@@ -239,9 +249,9 @@ const opTokenSet = Command.make('set', {}, () =>
             )
           : yield* readStdin
       const token = yield* parseServiceAccountToken(raw)
-      const file = yield* storeServiceAccountToken(token)
+      const file = yield* storeServiceAccountToken(name, token)
 
-      yield* Console.log(`stored the service-account token encrypted at ${file}`)
+      yield* Console.log(`stored the ${name} service-account token encrypted at ${file}`)
     })
   )
 ).pipe(
@@ -253,17 +263,24 @@ const opTokenSet = Command.make('set', {}, () =>
 const opTokenStatus = Command.make('status', {}, () =>
   handled(
     Effect.gen(function* () {
-      const auth = yield* resolveOpAuth
-      yield* Console.log(`1Password auth: ${describeAuth(auth)}`)
+      const registry = yield* readRegistry
+      const names = Object.keys(registry.factories)
+
+      if (names.length === 0) return yield* Console.log('no factories registered')
+
+      for (const name of names) {
+        yield* Console.log(`${name}: ${describeAuth(yield* resolveOpAuth(name))}`)
+      }
     })
   )
-).pipe(Command.withDescription('Show how provision authenticates the 1Password CLI.'))
+).pipe(Command.withDescription('Show how provision authenticates 1Password for each factory.'))
 
-const opTokenRemove = Command.make('remove', {}, () =>
+const opTokenRemove = Command.make('remove', { factory: factoryFlag }, ({ factory }) =>
   handled(
     Effect.gen(function* () {
-      const file = yield* opCredentialFile
-      const removed = yield* removeServiceAccountToken
+      const name = yield* validateFactoryName(factory)
+      const file = yield* opCredentialFile(name)
+      const removed = yield* removeServiceAccountToken(name)
       yield* Console.log(removed ? `removed ${file}` : `no stored token at ${file}`)
     })
   )
@@ -274,7 +291,7 @@ const opTokenRemove = Command.make('remove', {}, () =>
 )
 
 const opToken = Command.make('op-token').pipe(
-  Command.withDescription('Manage the 1Password service-account token used for factory items.'),
+  Command.withDescription("Manage each factory's 1Password service-account token."),
   Command.withSubcommands([opTokenSet, opTokenStatus, opTokenRemove])
 )
 

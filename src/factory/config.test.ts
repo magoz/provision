@@ -100,7 +100,9 @@ describe('provision config', () => {
 
       expect(process.exitCode).toBeUndefined()
       expect(JSON.parse((yield* registry) ?? '{}')).toEqual({
-        factories: { acme: { vault: 'provision-factory-acme', item: 'provision' } }
+        factories: {
+          acme: { vault: 'provision-factory-acme', item: 'provision', githubOwner: 'acme' }
+        }
       })
       expect((yield* Effect.promise(() => stat(file))).mode & 0o777).toBe(0o600)
       expect(invocations[0]?.args).toEqual([
