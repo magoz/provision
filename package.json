@@ -1,0 +1,45 @@
+{
+  "name": "@magoz/provision",
+  "version": "0.0.0",
+  "description": "Provision projects (factory), local checkouts (env), and disposable databases (db).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/magoz/provision.git"
+  },
+  "bin": {
+    "provision": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "node src/cli.ts",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "oxlint --max-warnings 0",
+    "lint:fix": "oxlint --fix",
+    "format:check": "oxfmt --check .",
+    "format:fix": "oxfmt --write .",
+    "test": "vitest run",
+    "verify": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm build",
+    "prepublishOnly": "pnpm verify"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.0.2",
+    "effect": "4.0.2"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.0.2",
+    "@types/node": "24.19.1",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@12.10.1"
+}
