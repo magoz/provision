@@ -23,6 +23,8 @@ export interface ProcessOptions {
   readonly cwd?: string
   /** Written to stdin (capture only); keeps secrets and request bodies out of argv. */
   readonly input?: string
+  /** Extra variables for this child only (secrets never enter our own environment or argv). */
+  readonly env?: Readonly<Record<string, string>>
 }
 
 /**
@@ -64,6 +66,7 @@ export const makeProcessRunner = Effect.gen(function* () {
           const handle = yield* spawner.spawn(
             ChildProcess.make(command, args, {
               cwd: options.cwd,
+              ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
               stdin:
                 options.input === undefined
                   ? 'ignore'
@@ -91,6 +94,7 @@ export const makeProcessRunner = Effect.gen(function* () {
           const handle = yield* spawner.spawn(
             ChildProcess.make(command, args, {
               cwd: options.cwd,
+              ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
               stdin: 'inherit',
               stdout: 'inherit',
               stderr: 'inherit'

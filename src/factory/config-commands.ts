@@ -1,7 +1,15 @@
-import { Console, Effect, Option } from 'effect'
+import { Console, Effect, Option, Redacted } from 'effect'
 import { Argument, Command, Flag, Prompt } from 'effect/cli'
 import { report } from '../shared/output.ts'
 import { decodeCredentials, describeSections, readItemFields } from './onepassword.ts'
+import {
+  opCredentialFile,
+  parseServiceAccountToken,
+  removeServiceAccountToken,
+  resolveOpAuth,
+  storeServiceAccountToken,
+  type OpAuthSource
+} from './op-credential.ts'
 import {
   readRegistry,
   RegistryError,
@@ -62,9 +70,9 @@ const listFactories = (json: boolean) =>
   })
 
 /** Reads the factory item and summarizes it without revealing any value. */
-const inspectFactory = (entry: FactoryEntry) =>
+const inspectFactory = (entry: FactoryEntry, auth: OpAuthSource) =>
   Effect.gen(function* () {
-    const fields = yield* readItemFields(entry)
+    const fields = yield* readItemFields(entry, auth)
     const credentials = yield* decodeCredentials(fields)
 
     return {
@@ -103,7 +111,7 @@ const add = Command.make(
         })
 
         // Refuse to register an item that cannot be read or is incomplete.
-        const inspected = yield* inspectFactory(entry)
+        const inspected = yield* inspectFactory(entry, yield* resolveOpAuth)
         const registry = yield* readRegistry
         yield* writeRegistry({ factories: { ...registry.factories, [name]: entry } })
 
@@ -166,8 +174,11 @@ const verify = Command.make(
           return yield* new RegistryError({ message: 'no matching factory registered' })
         }
 
+        const auth = yield* resolveOpAuth
+        yield* Console.log(`1Password auth: ${describeAuth(auth)}`)
+
         const results = yield* Effect.forEach(selected, ([factory, entry]) =>
-          inspectFactory(entry).pipe(
+          inspectFactory(entry, auth).pipe(
             Effect.map(inspected => ({ factory, ok: true as const, ...inspected })),
             Effect.catch(error =>
               Effect.succeed({ factory, ok: false as const, error: error.message })
@@ -197,9 +208,79 @@ const verify = Command.make(
     )
 ).pipe(Command.withDescription("Read each factory's 1Password item and report its sections."))
 
+const describeAuth = (auth: OpAuthSource) =>
+  auth.kind === 'environment'
+    ? 'service account (OP_SERVICE_ACCOUNT_TOKEN)'
+    : auth.kind === 'credential'
+      ? `service account (${auth.file})`
+      : 'op session or desktop app'
+
+const readStdin = Effect.promise(async () => {
+  const chunks: Array<Uint8Array> = []
+
+  for await (const chunk of process.stdin) {
+    if (chunk instanceof Uint8Array) chunks.push(chunk)
+    else if (typeof chunk === 'string') chunks.push(Buffer.from(chunk))
+  }
+
+  return Buffer.concat(chunks).toString('utf8')
+})
+
+const opTokenSet = Command.make('set', {}, () =>
+  handled(
+    Effect.gen(function* () {
+      const raw =
+        process.stdin.isTTY === true
+          ? yield* Prompt.run(
+              Prompt.Password({ message: '1Password service-account token (input hidden)' })
+            ).pipe(
+              Effect.map(value => Redacted.value(value)),
+              Effect.mapError(() => new RegistryError({ message: 'cancelled' }))
+            )
+          : yield* readStdin
+      const token = yield* parseServiceAccountToken(raw)
+      const file = yield* storeServiceAccountToken(token)
+
+      yield* Console.log(`stored the service-account token encrypted at ${file}`)
+    })
+  )
+).pipe(
+  Command.withDescription(
+    'Store a 1Password service-account token (stdin or hidden prompt), encrypted with systemd-creds.'
+  )
+)
+
+const opTokenStatus = Command.make('status', {}, () =>
+  handled(
+    Effect.gen(function* () {
+      const auth = yield* resolveOpAuth
+      yield* Console.log(`1Password auth: ${describeAuth(auth)}`)
+    })
+  )
+).pipe(Command.withDescription('Show how provision authenticates the 1Password CLI.'))
+
+const opTokenRemove = Command.make('remove', {}, () =>
+  handled(
+    Effect.gen(function* () {
+      const file = yield* opCredentialFile
+      const removed = yield* removeServiceAccountToken
+      yield* Console.log(removed ? `removed ${file}` : `no stored token at ${file}`)
+    })
+  )
+).pipe(
+  Command.withDescription(
+    'Delete the stored token (revoke it in 1Password: Developer > Service accounts).'
+  )
+)
+
+const opToken = Command.make('op-token').pipe(
+  Command.withDescription('Manage the 1Password service-account token used for factory items.'),
+  Command.withSubcommands([opTokenSet, opTokenStatus, opTokenRemove])
+)
+
 export const configCommand = Command.make('config', { json: jsonFlag }, ({ json }) =>
   handled(listFactories(json))
 ).pipe(
   Command.withDescription('Manage factories: which 1Password item holds each factory account set.'),
-  Command.withSubcommands([add, list, remove, verify])
+  Command.withSubcommands([add, list, remove, verify, opToken])
 )

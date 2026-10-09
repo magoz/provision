@@ -51,7 +51,32 @@ provision config add --name acme --vault provision-factory-acme [--item provisio
 provision config list [--json]
 provision config verify [<name>] [--json]
 provision config remove <name>
+provision config op-token set|status|remove
 ```
+
+### 1Password authentication
+
+`provision` reads factory items with the 1Password CLI, authenticated (first match wins) by:
+
+1. `OP_SERVICE_ACCOUNT_TOKEN` in the environment;
+2. a stored service-account token: `provision config op-token set` reads it from stdin (or a hidden
+   prompt) and encrypts it with `systemd-creds --user` (TPM2-bound where available) next to the
+   registry; each run decrypts it and passes it to `op` only;
+3. the current `op` session (`eval "$(op signin)"`) or the desktop app integration.
+
+On a headless Linux host, create a read-only service account scoped to the factory vaults and
+store it without the token ever touching the terminal or disk in clear:
+
+```bash
+eval "$(op signin)"
+op service-account create provision --expires-in 90d \
+  --vault provision-acme:read_items --raw | provision config op-token set
+provision config op-token status
+```
+
+Service accounts cannot read Private vaults or the account's default Shared vault, and their
+permissions are fixed at creation: rotate by creating a new one, storing it, and revoking the old
+one under Developer > Service accounts.
 
 `add` reads the item with `op` and refuses to save it unless it decodes. Item fields
 (`section.label`; a section counts only when all of its fields are present):

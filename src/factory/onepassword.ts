@@ -1,5 +1,6 @@
-import { Data, Effect, Redacted, Schema } from 'effect'
+import { Data, Effect, Option, Redacted, Schema } from 'effect'
 import { capture } from '../shared/process.ts'
+import { opEnvironment, type OpAuthSource } from './op-credential.ts'
 import type { FactoryEntry } from './registry.ts'
 
 export class CredentialsError extends Data.TaggedError('CredentialsError')<{
@@ -23,13 +24,17 @@ export type ItemFields = ReadonlyMap<string, Redacted.Redacted<string>>
  * Reads one factory item through the 1Password CLI. Values never enter argv or output; a failing
  * `op` call reports only its exit code.
  */
-export const readItemFields = (entry: FactoryEntry) =>
+export const readItemFields = (entry: FactoryEntry, auth: OpAuthSource) =>
   Effect.gen(function* () {
     const args = ['item', 'get', entry.item, '--vault', entry.vault, '--format', 'json', '--reveal']
 
     if (entry.account !== undefined) args.push('--account', entry.account)
 
-    const result = yield* capture('op', args).pipe(
+    const result = yield* capture(
+      'op',
+      args,
+      Option.match(opEnvironment(auth), { onNone: () => ({}), onSome: env => ({ env }) })
+    ).pipe(
       Effect.mapError(
         () => new CredentialsError({ message: '1Password CLI (op) could not be started' })
       )
@@ -37,7 +42,11 @@ export const readItemFields = (entry: FactoryEntry) =>
 
     if (result.exitCode !== 0) {
       return yield* new CredentialsError({
-        message: `cannot read 1Password item ${entry.item} in vault ${entry.vault} (op exit ${result.exitCode}); sign in with \`op signin\``
+        message:
+          `cannot read 1Password item ${entry.item} in vault ${entry.vault} (op exit ${result.exitCode}); ` +
+          (auth.kind === 'session'
+            ? 'sign in with `eval "$(op signin)"` or store a service-account token with `provision config op-token set`'
+            : 'check that the service account has read access to this vault')
       })
     }
 

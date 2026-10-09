@@ -10,6 +10,7 @@ import {
   type OnExisting
 } from './context.ts'
 import { decodeCredentials, readItemFields, type FactoryCredentials } from './onepassword.ts'
+import { resolveOpAuth } from './op-credential.ts'
 import { readRegistry, type Registry } from './registry.ts'
 import { domainStep } from './steps/domain.ts'
 import { neonStep } from './steps/neon.ts'
@@ -65,6 +66,7 @@ export const selectSteps = (configured: ReadonlyArray<FactoryStep>, only: Option
 /** The explicit factory, or the single registered factory whose item names the checkout owner. */
 const selectFactory = (registry: Registry, requested: Option.Option<string>, owner: string) =>
   Effect.gen(function* () {
+    const auth = yield* resolveOpAuth
     const entries = Object.entries(registry.factories)
 
     if (entries.length === 0) {
@@ -78,7 +80,7 @@ const selectFactory = (registry: Registry, requested: Option.Option<string>, own
         return yield* factoryError(`no factory named ${requested.value}`)
       }
 
-      const credentials = yield* readItemFields(entry).pipe(Effect.flatMap(decodeCredentials))
+      const credentials = yield* readItemFields(entry, auth).pipe(Effect.flatMap(decodeCredentials))
 
       return { name: requested.value, credentials }
     }
@@ -86,7 +88,7 @@ const selectFactory = (registry: Registry, requested: Option.Option<string>, own
     const matches: Array<{ readonly name: string; readonly credentials: FactoryCredentials }> = []
 
     for (const [name, entry] of entries) {
-      const credentials = yield* readItemFields(entry).pipe(Effect.flatMap(decodeCredentials))
+      const credentials = yield* readItemFields(entry, auth).pipe(Effect.flatMap(decodeCredentials))
 
       if (credentials.githubOwner === owner) matches.push({ name, credentials })
     }
