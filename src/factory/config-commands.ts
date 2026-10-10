@@ -8,7 +8,7 @@ import {
   readItemFields,
   readItemJson
 } from './onepassword.ts'
-import { completeItemFields, missingTemplateFields, onboardFactory } from './onboarding.ts'
+import { ensureFactoryItem, missingTemplateFields, onboardFactory } from './onboarding.ts'
 import { readHiddenLine } from './passphrase.ts'
 import {
   describeOpAuth,
@@ -143,17 +143,24 @@ const add = Command.make(
         }
 
         const auth = yield* resolveOpAuth(name)
-        let json = yield* readItemJson(location, auth)
-        const missing = missingTemplateFields(json)
+        const first = yield* Effect.result(readItemJson(location, auth))
+        const problem = Result.isFailure(first)
+          ? `cannot read item ${item} (${first.failure.message})`
+          : missingTemplateFields(first.success).length > 0
+            ? `item ${item} lacks ${missingTemplateFields(first.success).length} field(s)`
+            : undefined
 
-        // An item made by hand may lack fields: add them (empty) with the operator's sign-in.
-        if (missing.length > 0) {
-          yield* Console.log(
-            `item ${item} lacks ${missing.length} field(s); signing in to 1Password to add them empty`
-          )
-          yield* completeItemFields(vault, item)
-          json = yield* readItemJson(location, auth)
+        // A missing or hand-made item: create it, or add the missing fields (empty), with the
+        // operator's sign-in. Existing values are never touched.
+        if (problem !== undefined) {
+          yield* Console.log(`${problem}; signing in to 1Password to fix it`)
+          yield* ensureFactoryItem(vault, item, { assumeYes: options.yes })
         }
+
+        const json =
+          problem === undefined && Result.isSuccess(first)
+            ? first.success
+            : yield* readItemJson(location, auth)
 
         const fields = yield* parseItemFields(json)
         const sections = describeSections(fields)

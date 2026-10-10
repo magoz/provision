@@ -310,6 +310,32 @@ describe('provision config add', () => {
     })
   )
 
+  it.live('recreates a deleted item on a rerun with the stored token', () =>
+    Effect.gen(function* () {
+      const { invocations, onePassword, run } = yield* setup({ vault: true, item: base })
+      yield* run(...add)
+
+      onePassword.state.item = undefined
+      process.exitCode = undefined
+      const before = invocations.length
+      yield* run(...add)
+
+      expect(opCalls(invocations.slice(before))).toEqual([
+        'item get',
+        'account list',
+        'signin',
+        'item get',
+        'item create',
+        'signout',
+        'item get'
+      ])
+      expect(Object.keys(onePassword.state.item ?? {})).toContain('github.owner')
+      expect(onePassword.state.serviceAccounts).toBe(1)
+      // The recreated item is empty, so registration waits for the operator.
+      expect(process.exitCode).toBe(2)
+    })
+  )
+
   it.live('signs out even when setup fails', () =>
     Effect.gen(function* () {
       const { invocations, run } = yield* setup({

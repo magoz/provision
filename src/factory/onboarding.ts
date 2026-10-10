@@ -172,24 +172,6 @@ const addMissingFields = (
     )
   })
 
-/** Adds any missing template fields to an existing item, signing in as the operator. */
-export const completeItemFields = (vault: string, item: string) =>
-  withOperatorSession(env =>
-    Effect.gen(function* () {
-      const found = yield* capture(
-        'op',
-        ['item', 'get', item, '--vault', vault, '--format', 'json'],
-        {
-          env
-        }
-      )
-
-      if (found.exitCode !== 0) return yield* failure(`cannot read item ${item} in ${vault}`)
-
-      yield* addMissingFields(env, vault, item, missingTemplateFields(found.stdout))
-    })
-  )
-
 /** Ensures the item exists; returns `true` when it was just created (and so is still empty). */
 const ensureItem = (env: SessionEnv, vault: string, item: string, options: OnboardingOptions) =>
   Effect.gen(function* () {
@@ -247,6 +229,13 @@ const createServiceAccount = (env: SessionEnv, factory: string, vault: string) =
 
     return yield* parseServiceAccountToken(created.stdout)
   })
+
+/**
+ * Signs in as the operator and makes sure the item exists with every field: creates it when
+ * missing, adds missing fields (empty) otherwise. Existing fields and values are never touched.
+ */
+export const ensureFactoryItem = (vault: string, item: string, options: OnboardingOptions) =>
+  withOperatorSession(env => ensureItem(env, vault, item, options))
 
 /**
  * Signs in as the operator, ensures the vault and item, then creates and stores the factory's
