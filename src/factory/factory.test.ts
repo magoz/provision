@@ -171,6 +171,10 @@ describe('provision factory', () => {
       ])
       expect(recordFor(world, 'QSTASH_TOKEN', 'production')[0]?.type).toBe('sensitive')
       expect(world.resend.keys.map(key => key.name)).toEqual(['acme-app-dev', 'acme-app-prod'])
+      expect(world.resend.created).toEqual([
+        { name: 'acme-app-dev', permission: 'sending_access' },
+        { name: 'acme-app-prod', permission: 'sending_access' }
+      ])
       expect(world.reports.tokens.map(token => token.name)).toEqual([
         'acme-app-dev',
         'acme-app-prod'
@@ -274,6 +278,30 @@ describe('provision factory', () => {
       expect(process.exitCode).toBeUndefined()
       expect(recordFor(world, 'RESEND_API_KEY', 'production')).toHaveLength(1)
       expect(world.resend.keys).toHaveLength(2)
+    })
+  )
+
+  it.live('uses --email-from for AUTH_EMAIL_FROM and requires a verified domain', () =>
+    Effect.gen(function* () {
+      const withoutDomain = { ...itemFields }
+      delete withoutDomain['resend.sending_domain']
+
+      const { world, run } = yield* setup(withoutDomain)
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+
+      yield* run('--only', 'secrets', '--on-existing', 'abort')
+      expect(process.exitCode).toBe(2)
+
+      process.exitCode = undefined
+      yield* run('--only', 'secrets', '--on-existing', 'abort', '--email-from', 'hi@pending.test')
+      expect(process.exitCode).toBe(2)
+
+      process.exitCode = undefined
+      yield* run('--only', 'secrets', '--on-existing', 'abort', '--email-from', 'hi@acme.test')
+      expect(process.exitCode).toBeUndefined()
+      expect(recordFor(world, 'AUTH_EMAIL_FROM', 'production')[0]?.value).toBe(
+        'acme-app <hi@acme.test>'
+      )
     })
   )
 

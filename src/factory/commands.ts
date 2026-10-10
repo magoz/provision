@@ -125,6 +125,7 @@ interface FactoryOptions {
   readonly checkout: string
   readonly domain: Option.Option<string>
   readonly senderName: Option.Option<string>
+  readonly emailFrom: Option.Option<string>
   readonly factory: Option.Option<string>
   readonly only: Option.Option<string>
   readonly onExisting: OnExisting
@@ -157,6 +158,12 @@ export const runFactory = (options: FactoryOptions) =>
       return yield* factoryError(`--domain is required for ${needsDomain.join(', ')}`)
     }
 
+    const emailFrom = Option.getOrUndefined(options.emailFrom)?.trim().toLowerCase()
+
+    if (emailFrom !== undefined && !/^[^\s@<>]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(emailFrom)) {
+      return yield* factoryError('--email-from must be an address such as noreply@acme.com')
+    }
+
     const factory = yield* selectFactory(yield* readRegistry, options.factory, owner)
 
     if (factory.credentials.githubOwner !== owner) {
@@ -175,6 +182,7 @@ export const runFactory = (options: FactoryOptions) =>
       appDirectory: app.directory,
       domain,
       senderName: Option.getOrElse(options.senderName, () => name),
+      emailFrom,
       neonParentBranch: Option.getOrUndefined(options.neonParentBranch),
       dryRun: options.dryRun,
       onExisting: options.onExisting,
@@ -211,6 +219,12 @@ export const factoryCommand = Command.make(
     ),
     senderName: Flag.String('sender-name').pipe(
       Flag.withDescription('AUTH_EMAIL_FROM display name (default: repository name)'),
+      Flag.optional
+    ),
+    emailFrom: Flag.String('email-from').pipe(
+      Flag.withDescription(
+        'AUTH_EMAIL_FROM address, e.g. noreply@acme.com (default: noreply@<resend.sending_domain>)'
+      ),
       Flag.optional
     ),
     factory: Flag.String('factory').pipe(

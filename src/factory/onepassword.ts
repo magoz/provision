@@ -128,7 +128,11 @@ export interface FactoryCredentials {
       }
     | undefined
   readonly resend:
-    | { readonly apiKey: Redacted.Redacted<string>; readonly sendingDomain: string }
+    | {
+        readonly apiKey: Redacted.Redacted<string>
+        /** Optional default sender domain for `AUTH_EMAIL_FROM` (`noreply@<domain>`). */
+        readonly sendingDomain: string | undefined
+      }
     | undefined
   readonly reportReceiver:
     | { readonly url: string; readonly factoryKey: Redacted.Redacted<string> }
@@ -146,7 +150,7 @@ export const credentialSections: ReadonlyArray<SectionSpec> = [
   { section: 'neon', required: ['api_key', 'org_id'] },
   { section: 'cloudflare', required: ['api_token', 'account_id'] },
   { section: 'upstash', required: ['email', 'api_key'] },
-  { section: 'resend', required: ['api_key', 'sending_domain'] },
+  { section: 'resend', required: ['api_key'] },
   { section: 'report_receiver', required: ['url', 'factory_key'] }
 ]
 
@@ -229,7 +233,7 @@ export const decodeCredentials = (fields: ItemFields) =>
               productionApiKey: field('upstash.prod_api_key')
             }
           : undefined,
-      resend: resendKey && sendingDomain ? { apiKey: resendKey, sendingDomain } : undefined,
+      resend: resendKey ? { apiKey: resendKey, sendingDomain } : undefined,
       reportReceiver:
         receiverUrl && receiverKey ? { url: receiverUrl, factoryKey: receiverKey } : undefined
     } satisfies FactoryCredentials

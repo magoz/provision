@@ -46,6 +46,8 @@ export interface FactoryContext {
   readonly appDirectory: string
   readonly domain: string | undefined
   readonly senderName: string
+  /** Sender address for `AUTH_EMAIL_FROM`; defaults to `noreply@<resend.sending_domain>`. */
+  readonly emailFrom: string | undefined
   readonly neonParentBranch: string | undefined
   readonly dryRun: boolean
   readonly onExisting: OnExisting

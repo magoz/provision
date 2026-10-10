@@ -109,13 +109,14 @@ sudo npm install -g --prefix /usr/local @magoz/provision
 | `neon`            | `api_key` (organization key), `org_id`                                   | `neon`                    |
 | `cloudflare`      | `api_token` (R2 write + account tokens write), `account_id`              | `r2`                      |
 | `upstash`         | `email`, `api_key`; optional `dev_api_key`, `prod_api_key` (team-scoped) | `upstash`                 |
-| `resend`          | `api_key` (full access), `sending_domain` (verified, EU)                 | `resend`, `secrets`       |
+| `resend`          | `api_key` (full access); optional `sending_domain` (default sender)      | `resend`, `secrets`       |
 | `report_receiver` | `url`, `factory_key`                                                     | `reports` (optional)      |
 
 ## `provision factory`
 
 ```bash
 provision factory [--checkout <repo>] --domain <production-host> [--sender-name <name>]
+                  [--email-from <address>]
                   [--factory <name>] [--only vercel,neon,r2,upstash,resend,reports,secrets,domain]
                   [--on-existing ask|reuse|overwrite|abort] [--neon-parent-branch <id>] [--dry-run]
 ```
@@ -131,7 +132,7 @@ Vercel calls use the operator's `vercel` login, scoped to the factory team.
 | `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production) |
 | `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                        | `R2_*`                                                               |
 | `upstash` | `<repo>-dev`/`-prod` teams; QStash credentials when team keys are in the item                      | `QSTASH_*`                                                           |
-| `resend`  | sending-only keys for the factory domain                                                           | `RESEND_API_KEY`                                                     |
+| `resend`  | sending-only keys (any verified domain)                                                            | `RESEND_API_KEY`                                                     |
 | `reports` | report tokens from the factory's receiver                                                          | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                       |
 | `secrets` | generated `BETTER_AUTH_SECRET`, `INTEGRATION_CREDENTIAL_ENCRYPTION_KEY`, `CRON_SECRET`, VAPID pair | those, plus `AUTH_EMAIL_FROM`, `AI_PROVIDER_USAGE_ALERT_THRESHOLDS`  |
 | `domain`  | attaches `--domain`                                                                                | —                                                                    |

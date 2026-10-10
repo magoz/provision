@@ -38,7 +38,10 @@ export interface FakeWorld {
     readonly buckets: Map<string, { cors: unknown }>
     readonly tokens: Array<{ id: string; name: string }>
   }
-  readonly resend: { readonly keys: Array<{ id: string; name: string }> }
+  readonly resend: {
+    readonly keys: Array<{ id: string; name: string }>
+    readonly created: Array<unknown>
+  }
   readonly upstash: { readonly teams: Array<{ team_id: string; team_name: string }> }
   readonly reports: {
     readonly tokens: Array<{ id: string; name: string; revokedAt: string | null }>
@@ -55,7 +58,7 @@ export const makeWorld = (): FakeWorld => ({
   },
   neon: { projects: [], apiKeys: [] },
   cloudflare: { buckets: new Map(), tokens: [] },
-  resend: { keys: [] },
+  resend: { keys: [], created: [] },
   upstash: { teams: [] },
   reports: { tokens: [] }
 })
@@ -369,7 +372,11 @@ const neon = (world: FakeWorld, method: string, url: URL, body: unknown) => {
 const resend = (world: FakeWorld, method: string, path: string, body: unknown) => {
   if (path === '/domains') {
     return json({
-      data: [{ id: 'dom_1', name: 'mail.example.test', status: 'verified', region: 'eu-west-1' }]
+      data: [
+        { id: 'dom_1', name: 'mail.example.test', status: 'verified' },
+        { id: 'dom_2', name: 'acme.test', status: 'verified' },
+        { id: 'dom_3', name: 'pending.test', status: 'pending' }
+      ]
     })
   }
 
@@ -377,6 +384,7 @@ const resend = (world: FakeWorld, method: string, path: string, body: unknown) =
 
   if (path === '/api-keys' && method === 'POST') {
     const key = { id: nextId('re'), name: text(body, 'name') }
+    world.resend.created.push(body)
     world.resend.keys.push(key)
 
     return json({ id: key.id, token: `re_${key.id}` })

@@ -12,6 +12,7 @@ import {
   type FactoryContext,
   type ProjectHandle
 } from '../context.ts'
+import { requireVerifiedDomain } from '../providers/resend.ts'
 import { listEnvRecords, type EnvRecord } from '../vercel-api.ts'
 
 export const usageAlertThresholds = '50,80,95'
@@ -106,6 +107,18 @@ export const secretsStep = (context: FactoryContext) =>
       return yield* factoryError('the secrets step needs the resend section for AUTH_EMAIL_FROM')
     }
 
+    const fromAddress =
+      context.emailFrom ??
+      (resend.sendingDomain === undefined ? undefined : `noreply@${resend.sendingDomain}`)
+
+    if (fromAddress === undefined) {
+      return yield* factoryError(
+        'the secrets step needs a sender: pass --email-from or set resend.sending_domain in the factory item'
+      )
+    }
+
+    yield* requireVerifiedDomain(resend.apiKey, fromAddress.slice(fromAddress.indexOf('@') + 1))
+
     const handle = yield* requireProject(context)
 
     if (Option.isNone(handle)) {
@@ -132,7 +145,7 @@ export const secretsStep = (context: FactoryContext) =>
     const plain: ReadonlyArray<EnvEntry> = [
       {
         key: 'AUTH_EMAIL_FROM',
-        value: Redacted.make(`${context.senderName} <noreply@${resend.sendingDomain}>`),
+        value: Redacted.make(`${context.senderName} <${fromAddress}>`),
         type: 'plain'
       },
       {

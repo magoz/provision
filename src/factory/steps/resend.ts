@@ -7,25 +7,19 @@ import {
   writeGroup,
   type FactoryContext
 } from '../context.ts'
-import {
-  createSendingKey,
-  deleteApiKey,
-  findApiKey,
-  findSendingDomain
-} from '../providers/resend.ts'
+import { createSendingKey, deleteApiKey, findApiKey } from '../providers/resend.ts'
 import { ensureScopedKey } from '../scoped-key.ts'
 import { listEnvRecords } from '../vercel-api.ts'
 
 const variableKey = 'RESEND_API_KEY'
 
-/** One sending-only key per environment group, restricted to the factory's sending domain. */
+/** One sending-only key per environment group (not restricted to a domain). */
 export const resendStep = (context: FactoryContext) =>
   Effect.gen(function* () {
     const resend = context.credentials.resend
 
     if (resend === undefined) return yield* factoryError('the factory item has no resend section')
 
-    const domainId = yield* findSendingDomain(resend.apiKey, resend.sendingDomain)
     const handle = yield* requireProject(context)
 
     if (Option.isNone(handle)) {
@@ -51,7 +45,7 @@ export const resendStep = (context: FactoryContext) =>
         existing: yield* findApiKey(resend.apiKey, target.name),
         vercelComplete: groupHasKeys(records, target.group, [variableKey]),
         createAndWrite: Effect.gen(function* () {
-          const key = yield* createSendingKey(resend.apiKey, target.name, domainId)
+          const key = yield* createSendingKey(resend.apiKey, target.name)
 
           yield* writeGroup(context, handle.value, target.group, [
             { key: variableKey, value: key.token, type: target.type }

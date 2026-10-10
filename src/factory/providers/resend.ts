@@ -3,22 +3,14 @@ import { ProviderError, requestJson, requestJsonRequired } from '../http.ts'
 
 const API_ROOT = 'https://api.resend.com'
 
-/** Sending domains live in Resend's EU region. */
-export const resendRegion = 'eu-west-1'
-
 const headers = (apiKey: Redacted.Redacted<string>) => ({
   Authorization: `Bearer ${Redacted.value(apiKey)}`
 })
 
-const Domain = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  status: Schema.String,
-  region: Schema.String
-})
+const Domain = Schema.Struct({ id: Schema.String, name: Schema.String, status: Schema.String })
 
-/** The factory's shared sending domain: registered exactly once, verified, in the EU region. */
-export const findSendingDomain = (apiKey: Redacted.Redacted<string>, name: string) =>
+/** The sender domain must be registered and verified in this Resend account. */
+export const requireVerifiedDomain = (apiKey: Redacted.Redacted<string>, name: string) =>
   Effect.gen(function* () {
     const response = yield* requestJsonRequired(
       'Resend domain listing',
@@ -26,22 +18,13 @@ export const findSendingDomain = (apiKey: Redacted.Redacted<string>, name: strin
       Schema.Struct({ data: Schema.Array(Domain) }),
       { headers: headers(apiKey) }
     )
-    const matches = response.data.filter(domain => domain.name === name)
-    const domain = matches.length === 1 ? matches[0] : undefined
+    const domain = response.data.find(candidate => candidate.name === name)
 
-    if (domain === undefined) {
+    if (domain === undefined || domain.status !== 'verified') {
       return yield* new ProviderError({
-        message: `Resend sending domain ${name} must be registered exactly once (found ${matches.length})`
+        message: `Resend domain ${name} must be verified in the factory's Resend account (${domain === undefined ? 'not registered' : `status ${domain.status}`})`
       })
     }
-
-    if (domain.status !== 'verified' || domain.region !== resendRegion) {
-      return yield* new ProviderError({
-        message: `Resend sending domain ${name} must be verified in ${resendRegion} (status ${domain.status}, region ${domain.region})`
-      })
-    }
-
-    return domain.id
   })
 
 export const findApiKey = (apiKey: Redacted.Redacted<string>, name: string) =>
@@ -62,12 +45,8 @@ export const findApiKey = (apiKey: Redacted.Redacted<string>, name: string) =>
     })
   )
 
-/** A sending-only key restricted to one domain. */
-export const createSendingKey = (
-  apiKey: Redacted.Redacted<string>,
-  name: string,
-  domainId: string
-) =>
+/** A sending-only key (it can send from any verified domain, but read and manage nothing). */
+export const createSendingKey = (apiKey: Redacted.Redacted<string>, name: string) =>
   requestJsonRequired(
     'Resend API key creation',
     `${API_ROOT}/api-keys`,
@@ -75,7 +54,7 @@ export const createSendingKey = (
     {
       method: 'POST',
       headers: headers(apiKey),
-      body: { name, permission: 'sending_access', domain_id: domainId }
+      body: { name, permission: 'sending_access' }
     }
   ).pipe(Effect.map(created => ({ id: created.id, token: Redacted.make(created.token) })))
 

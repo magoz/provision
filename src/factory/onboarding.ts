@@ -101,7 +101,8 @@ const secretFields = new Set(['api_key', 'api_token', 'factory_key', 'dev_api_ke
 /** An empty item with every factory field, ready to be filled in the 1Password app. */
 export const templateFields = [
   ...credentialSections.map(spec => ({ section: spec.section, labels: spec.required })),
-  { section: 'upstash', labels: ['dev_api_key', 'prod_api_key'] }
+  { section: 'upstash', labels: ['dev_api_key', 'prod_api_key'] },
+  { section: 'resend', labels: ['sending_domain'] }
 ].flatMap(({ section, labels }) =>
   labels.map(label => ({ section, label, concealed: secretFields.has(label) }))
 )
