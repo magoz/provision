@@ -1,7 +1,7 @@
 import { Console, Data, Effect, Option, Redacted, Schema } from 'effect'
 import { Prompt } from 'effect/cli'
 import { capture, inherit } from '../shared/process.ts'
-import { credentialSections } from './onepassword.ts'
+import { credentialSections, opErrorMessage } from './onepassword.ts'
 import { parseServiceAccountToken, storeServiceAccountToken } from './op-credential.ts'
 
 /**
@@ -15,6 +15,13 @@ export class OnboardingError extends Data.TaggedError('OnboardingError')<{
 }> {}
 
 const failure = (message: string) => new OnboardingError({ message })
+
+/** A failure that includes `op`'s own explanation (never secret values). */
+const opFailure = (message: string, result: { readonly stderr: string }) => {
+  const reason = opErrorMessage(result.stderr)
+
+  return failure(reason === undefined ? message : `${message}: ${reason}`)
+}
 
 /** Environment that authenticates `op` children with the operator session. */
 type SessionEnv = Readonly<Record<string, string>>
@@ -84,7 +91,7 @@ const ensureVault = (env: SessionEnv, vault: string, options: OnboardingOptions)
 
     const created = yield* capture('op', ['vault', 'create', vault], { env })
 
-    if (created.exitCode !== 0) return yield* failure(`could not create vault ${vault}`)
+    if (created.exitCode !== 0) return yield* opFailure(`could not create vault ${vault}`, created)
 
     yield* Console.log(`created vault ${vault}`)
   })
@@ -101,7 +108,7 @@ export const templateFields = [
 
 export const itemTemplate = (title: string) => {
   const fields = templateFields.map(field => ({
-    id: `${field.section}.${field.label}`,
+    id: `${field.section}_${field.label}`,
     label: field.label,
     section: { id: field.section },
     type: field.concealed ? 'CONCEALED' : 'STRING',
@@ -165,7 +172,8 @@ const addMissingFields = (
       env
     })
 
-    if (edited.exitCode !== 0) return yield* failure(`could not add fields to item ${item}`)
+    if (edited.exitCode !== 0)
+      return yield* opFailure(`could not add fields to item ${item}`, edited)
 
     yield* Console.log(
       `added ${missing.length} empty field(s) to ${item}: ${missing.map(field => `${field.section}.${field.label}`).join(', ')}`
@@ -203,7 +211,9 @@ const ensureItem = (env: SessionEnv, vault: string, item: string, options: Onboa
       input: itemTemplate(item)
     })
 
-    if (created.exitCode !== 0) return yield* failure(`could not create item ${item} in ${vault}`)
+    if (created.exitCode !== 0) {
+      return yield* opFailure(`could not create item ${item} in ${vault}`, created)
+    }
 
     yield* Console.log(`created item ${item} in ${vault}`)
 
@@ -222,8 +232,9 @@ const createServiceAccount = (env: SessionEnv, factory: string, vault: string) =
     )
 
     if (created.exitCode !== 0) {
-      return yield* failure(
-        `could not create service account ${name}; if it already exists, revoke it under Developer > Service accounts and run this again`
+      return yield* opFailure(
+        `could not create service account ${name} (if it already exists, revoke it under Developer > Service accounts and run this again)`,
+        created
       )
     }
 

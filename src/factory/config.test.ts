@@ -122,10 +122,12 @@ const fakeOnePassword = (initial: Initial) => {
     }
 
     if (noun === 'item' && verb === 'create') {
-      const template: { fields: ReadonlyArray<{ id: string }> } = JSON.parse(
-        invocation.input ?? '{}'
+      const template: {
+        fields: ReadonlyArray<{ label: string; section: { id: string } }>
+      } = JSON.parse(invocation.input ?? '{}')
+      state.item = Object.fromEntries(
+        template.fields.map(field => [`${field.section.id}.${field.label}`, ''])
       )
-      state.item = Object.fromEntries(template.fields.map(field => [field.id, '']))
 
       return undefined
     }
