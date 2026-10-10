@@ -1,8 +1,14 @@
 import { Console, Effect, Option, Redacted, Result } from 'effect'
 import { Argument, Command, Flag, Prompt } from 'effect/cli'
 import { report } from '../shared/output.ts'
-import { decodeCredentials, describeSections, readItemFields } from './onepassword.ts'
-import { onboardFactory } from './onboarding.ts'
+import {
+  decodeCredentials,
+  describeSections,
+  parseItemFields,
+  readItemFields,
+  readItemJson
+} from './onepassword.ts'
+import { completeItemFields, missingTemplateFields, onboardFactory } from './onboarding.ts'
 import { readHiddenLine } from './passphrase.ts'
 import {
   describeOpAuth,
@@ -137,7 +143,19 @@ const add = Command.make(
         }
 
         const auth = yield* resolveOpAuth(name)
-        const fields = yield* readItemFields(location, auth)
+        let json = yield* readItemJson(location, auth)
+        const missing = missingTemplateFields(json)
+
+        // An item made by hand may lack fields: add them (empty) with the operator's sign-in.
+        if (missing.length > 0) {
+          yield* Console.log(
+            `item ${item} lacks ${missing.length} field(s); signing in to 1Password to add them empty`
+          )
+          yield* completeItemFields(vault, item)
+          json = yield* readItemJson(location, auth)
+        }
+
+        const fields = yield* parseItemFields(json)
         const sections = describeSections(fields)
         const credentials = yield* Effect.result(decodeCredentials(fields))
 

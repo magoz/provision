@@ -67,7 +67,13 @@ interface Initial {
 }
 
 const fakeOnePassword = (initial: Initial) => {
-  const state = { ...initial, serviceAccounts: 0 }
+  const edits: Array<ReadonlyArray<string>> = []
+  const state = {
+    ...initial,
+    item: initial.item === undefined ? undefined : { ...initial.item },
+    serviceAccounts: 0,
+    edits
+  }
 
   const script = (invocation: Invocation) => {
     const [noun, verb] = invocation.args
@@ -105,7 +111,23 @@ const fakeOnePassword = (initial: Initial) => {
     }
 
     if (noun === 'item' && verb === 'create') {
-      state.item = {}
+      const template: { fields: ReadonlyArray<{ id: string }> } = JSON.parse(
+        invocation.input ?? '{}'
+      )
+      state.item = Object.fromEntries(template.fields.map(field => [field.id, '']))
+
+      return undefined
+    }
+
+    if (noun === 'item' && verb === 'edit') {
+      const assignments = invocation.args.slice(5)
+      state.edits.push(assignments)
+
+      for (const assignment of assignments) {
+        const key = assignment.replace(/\[.*$/, '')
+
+        if (state.item !== undefined && !(key in state.item)) state.item[key] = ''
+      }
 
       return undefined
     }
@@ -170,7 +192,8 @@ describe('provision config add', () => {
       expect(process.exitCode).toBe(2)
       expect(yield* registry).toBeUndefined()
       expect(onePassword.state.vault).toBe(true)
-      expect(onePassword.state.item).toEqual({})
+      expect(Object.keys(onePassword.state.item ?? {})).toContain('neon.api_key')
+      expect(Object.values(onePassword.state.item ?? {}).every(value => value === '')).toBe(true)
       expect(onePassword.state.serviceAccounts).toBe(1)
       expect(opCalls(invocations)).toEqual([
         'account list',
@@ -183,6 +206,7 @@ describe('provision config add', () => {
         'signout',
         'item get'
       ])
+      expect(onePassword.state.edits).toEqual([])
 
       const signin = invocations.find(invocation => invocation.args[0] === 'signin')
       expect(signin?.interactive).toBe(true)
@@ -202,7 +226,7 @@ describe('provision config add', () => {
       expect(read?.env).toEqual({ OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken })
 
       // The operator fills in the item; the rerun needs only the passphrase.
-      onePassword.state.item = base
+      onePassword.state.item = { ...onePassword.state.item, ...base }
       process.exitCode = undefined
       const before = invocations.length
       yield* run(...add)
@@ -224,22 +248,54 @@ describe('provision config add', () => {
     })
   )
 
-  it.live('reuses an existing vault and item', () =>
+  it.live('adds missing fields to an existing item without touching filled ones', () =>
     Effect.gen(function* () {
-      const { invocations, run } = yield* setup({ vault: true, item: base })
+      const { invocations, onePassword, run } = yield* setup({ vault: true, item: base })
 
       yield* run(...add)
 
+      // github and vercel are filled; the other sections are optional, so it registers.
       expect(process.exitCode).toBeUndefined()
       expect(opCalls(invocations)).toEqual([
         'account list',
         'signin',
         'vault get',
         'item get',
+        'item edit',
         'service-account create',
         'signout',
         'item get'
       ])
+
+      const added = onePassword.state.edits[0] ?? []
+      expect(added).toContain('neon.api_key[password]=')
+      expect(added).toContain('resend.sending_domain[text]=')
+      expect(added.some(assignment => assignment.startsWith('github.owner'))).toBe(false)
+      expect(onePassword.state.item?.['github.owner']).toBe('acme')
+    })
+  )
+
+  it.live('adds missing fields on a rerun with the stored token', () =>
+    Effect.gen(function* () {
+      const { invocations, onePassword, run } = yield* setup({ vault: true, item: base })
+      yield* run(...add)
+
+      // The item loses fields after setup, e.g. recreated by hand.
+      onePassword.state.item = { ...base }
+      process.exitCode = undefined
+      const before = invocations.length
+      yield* run(...add)
+
+      expect(opCalls(invocations.slice(before))).toEqual([
+        'item get',
+        'account list',
+        'signin',
+        'item get',
+        'item edit',
+        'signout',
+        'item get'
+      ])
+      expect(onePassword.state.serviceAccounts).toBe(1)
     })
   )
 

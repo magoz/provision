@@ -92,19 +92,21 @@ const ensureVault = (env: SessionEnv, vault: string, options: OnboardingOptions)
 const secretFields = new Set(['api_key', 'api_token', 'factory_key', 'dev_api_key', 'prod_api_key'])
 
 /** An empty item with every factory field, ready to be filled in the 1Password app. */
+export const templateFields = [
+  ...credentialSections.map(spec => ({ section: spec.section, labels: spec.required })),
+  { section: 'upstash', labels: ['dev_api_key', 'prod_api_key'] }
+].flatMap(({ section, labels }) =>
+  labels.map(label => ({ section, label, concealed: secretFields.has(label) }))
+)
+
 export const itemTemplate = (title: string) => {
-  const fields = [
-    ...credentialSections.map(spec => ({ section: spec.section, labels: spec.required })),
-    { section: 'upstash', labels: ['dev_api_key', 'prod_api_key'] }
-  ].flatMap(({ section, labels }) =>
-    labels.map(label => ({
-      id: `${section}.${label}`,
-      label,
-      section: { id: section },
-      type: secretFields.has(label) ? 'CONCEALED' : 'STRING',
-      value: ''
-    }))
-  )
+  const fields = templateFields.map(field => ({
+    id: `${field.section}.${field.label}`,
+    label: field.label,
+    section: { id: field.section },
+    type: field.concealed ? 'CONCEALED' : 'STRING',
+    value: ''
+  }))
 
   return JSON.stringify({
     title,
@@ -113,6 +115,80 @@ export const itemTemplate = (title: string) => {
     fields
   })
 }
+
+const OpItemFields = Schema.fromJsonString(
+  Schema.Struct({
+    fields: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          label: Schema.optional(Schema.String),
+          section: Schema.optional(Schema.Struct({ label: Schema.optional(Schema.String) }))
+        })
+      )
+    )
+  })
+)
+
+/** Template fields an item lacks entirely (empty fields count as present). */
+export const missingTemplateFields = (itemJson: string) => {
+  const decoded = Schema.decodeUnknownOption(OpItemFields)(itemJson)
+  const present = new Set(
+    Option.match(decoded, { onNone: () => [], onSome: item => item.fields ?? [] }).flatMap(
+      field => {
+        const label = field.label?.trim().toLowerCase()
+        const section = field.section?.label?.trim().toLowerCase()
+
+        if (label === undefined || label === '') return []
+
+        return [section === undefined || section === '' ? label : `${section}.${label}`]
+      }
+    )
+  )
+
+  return templateFields.filter(field => !present.has(`${field.section}.${field.label}`))
+}
+
+/** Adds the missing fields with empty values; existing fields and values are never touched. */
+const addMissingFields = (
+  env: SessionEnv,
+  vault: string,
+  item: string,
+  missing: ReadonlyArray<(typeof templateFields)[number]>
+) =>
+  Effect.gen(function* () {
+    if (missing.length === 0) return
+
+    const assignments = missing.map(
+      field => `${field.section}.${field.label}[${field.concealed ? 'password' : 'text'}]=`
+    )
+    const edited = yield* capture('op', ['item', 'edit', item, '--vault', vault, ...assignments], {
+      env
+    })
+
+    if (edited.exitCode !== 0) return yield* failure(`could not add fields to item ${item}`)
+
+    yield* Console.log(
+      `added ${missing.length} empty field(s) to ${item}: ${missing.map(field => `${field.section}.${field.label}`).join(', ')}`
+    )
+  })
+
+/** Adds any missing template fields to an existing item, signing in as the operator. */
+export const completeItemFields = (vault: string, item: string) =>
+  withOperatorSession(env =>
+    Effect.gen(function* () {
+      const found = yield* capture(
+        'op',
+        ['item', 'get', item, '--vault', vault, '--format', 'json'],
+        {
+          env
+        }
+      )
+
+      if (found.exitCode !== 0) return yield* failure(`cannot read item ${item} in ${vault}`)
+
+      yield* addMissingFields(env, vault, item, missingTemplateFields(found.stdout))
+    })
+  )
 
 /** Ensures the item exists; returns `true` when it was just created (and so is still empty). */
 const ensureItem = (env: SessionEnv, vault: string, item: string, options: OnboardingOptions) =>
@@ -125,7 +201,11 @@ const ensureItem = (env: SessionEnv, vault: string, item: string, options: Onboa
       }
     )
 
-    if (found.exitCode === 0) return false
+    if (found.exitCode === 0) {
+      yield* addMissingFields(env, vault, item, missingTemplateFields(found.stdout))
+
+      return false
+    }
 
     if (
       !(yield* confirm(

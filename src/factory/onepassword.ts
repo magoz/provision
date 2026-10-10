@@ -21,10 +21,10 @@ const OpItem = Schema.fromJsonString(
 export type ItemFields = ReadonlyMap<string, Redacted.Redacted<string>>
 
 /**
- * Reads one factory item through the 1Password CLI. Values never enter argv or output; a failing
- * `op` call reports only its exit code.
+ * Reads one factory item as `op` JSON (values revealed; never printed). A failing `op` call
+ * reports only its exit code.
  */
-export const readItemFields = (entry: FactoryEntry, auth: OpAuthSource) =>
+export const readItemJson = (entry: FactoryEntry, auth: OpAuthSource) =>
   Effect.gen(function* () {
     const args = ['item', 'get', entry.item, '--vault', entry.vault, '--format', 'json', '--reveal']
 
@@ -50,7 +50,17 @@ export const readItemFields = (entry: FactoryEntry, auth: OpAuthSource) =>
       })
     }
 
-    const item = yield* Schema.decodeUnknownEffect(OpItem)(result.stdout).pipe(
+    return result.stdout
+  })
+
+/** Reads one factory item's non-empty fields; values stay redacted. */
+export const readItemFields = (entry: FactoryEntry, auth: OpAuthSource) =>
+  Effect.flatMap(readItemJson(entry, auth), parseItemFields)
+
+/** Non-empty fields of an `op item get --format json` result. */
+export const parseItemFields = (json: string) =>
+  Effect.gen(function* () {
+    const item = yield* Schema.decodeUnknownEffect(OpItem)(json).pipe(
       Effect.mapError(
         () => new CredentialsError({ message: '1Password returned an unexpected item shape' })
       )
