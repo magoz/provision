@@ -144,6 +144,9 @@ updated, old key deleted); generated secrets can be reused or regenerated. A key
 missing from Vercel cannot be reused and must be rotated. `--dry-run` inspects and prints what
 would change.
 
+`vercel` runs first; the other steps then run concurrently. Each step's output is printed as one
+block when it finishes, and a failing step lets the others finish before the run fails.
+
 ## `provision env`
 
 Makes a checkout runnable (formerly `provision-env`).

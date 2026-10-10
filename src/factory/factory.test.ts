@@ -305,6 +305,22 @@ describe('provision factory', () => {
     })
   )
 
+  it.live('lets the other steps finish when one fails', () =>
+    Effect.gen(function* () {
+      const withoutDomain = { ...itemFields }
+      delete withoutDomain['resend.sending_domain']
+
+      const { world, run } = yield* setup(withoutDomain)
+      yield* run('--on-existing', 'abort')
+
+      expect(process.exitCode).toBe(2)
+      expect(recordFor(world, 'AUTH_EMAIL_FROM', 'production')).toEqual([])
+      expect(world.neon.projects).toHaveLength(2)
+      expect(world.resend.keys).toHaveLength(2)
+      expect(recordFor(world, 'R2_BUCKET_NAME', 'production')).toHaveLength(1)
+    })
+  )
+
   it.live('mutates nothing in a dry run', () =>
     Effect.gen(function* () {
       const { world, run } = yield* setup()

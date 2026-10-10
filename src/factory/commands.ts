@@ -1,4 +1,5 @@
-import { Console, Effect, Option } from 'effect'
+import { format } from 'node:util'
+import { Console, Effect, Option, Result } from 'effect'
 import { Command, Flag } from 'effect/cli'
 import { resolveAppDirectory } from '../env/paths.ts'
 import { resolveWorkspace } from '../shared/git.ts'
@@ -31,6 +32,27 @@ const steps = {
   secrets: secretsStep,
   domain: domainStep
 } satisfies Record<FactoryStep, (context: FactoryContext) => Effect.Effect<void, unknown, unknown>>
+
+/**
+ * Runs one step with its output buffered and printed as one block when it ends, so concurrent
+ * steps do not interleave. A failing step never interrupts the others mid-mutation.
+ */
+const runStep = (step: FactoryStep, context: FactoryContext) =>
+  Effect.gen(function* () {
+    const lines = [`\n[${step}]`]
+    const console = yield* Console.Console
+    const buffered: Console.Console = {
+      ...console,
+      log: (...args) => {
+        lines.push(format(...args))
+      }
+    }
+    yield* steps[step](context).pipe(
+      Effect.provideService(Console.Console, buffered),
+      Effect.tapError(error => Effect.sync(() => lines.push(`  failed: ${error.message}`))),
+      Effect.ensuring(Effect.suspend(() => Console.log(lines.join('\n'))))
+    )
+  })
 
 const isFactoryStep = (value: string): value is FactoryStep =>
   factorySteps.some(step => step === value)
@@ -195,9 +217,21 @@ export const runFactory = (options: FactoryOptions) =>
         `  steps: ${selected.join(', ')}`
     )
 
-    for (const step of selected) {
-      yield* Console.log(`\n[${step}]`)
-      yield* steps[step](context)
+    // Every other step needs the Vercel project, so `vercel` runs alone first.
+    if (selected.includes('vercel')) yield* runStep('vercel', context)
+
+    const results = yield* Effect.forEach(
+      selected.filter(step => step !== 'vercel'),
+      step => runStep(step, context).pipe(Effect.result),
+      { concurrency: 'unbounded' }
+    )
+    const failed = results.flatMap(result => (Result.isFailure(result) ? [result.failure] : []))
+
+    if (failed.length === 1 && failed[0] !== undefined) return yield* failed[0]
+    if (failed.length > 1) {
+      return yield* factoryError(
+        `${failed.length} steps failed: ${failed.map(error => error.message).join('; ')}`
+      )
     }
 
     yield* Console.log(

@@ -1,4 +1,4 @@
-import { Console, Data, Effect, Option, type Redacted } from 'effect'
+import { Console, Data, Effect, Option, Semaphore, type Redacted } from 'effect'
 import { Prompt } from 'effect/cli'
 import type { RepoConfig } from '../shared/repo-config.ts'
 import type { FactoryCredentials } from './onepassword.ts'
@@ -62,6 +62,9 @@ export const factoryError = (message: string) => new FactoryError({ message })
 
 const interactive = () => process.stdin.isTTY === true && process.stdout.isTTY === true
 
+/** Concurrent steps share one terminal: one prompt at a time. */
+const promptLock = Semaphore.makeUnsafe(1)
+
 /** Decides what to do with an existing resource: `reuse` or `overwrite` (abort fails). */
 export const decide = (context: FactoryContext, kind: ResourceKind, description: string) =>
   Effect.gen(function* () {
@@ -109,7 +112,10 @@ export const decide = (context: FactoryContext, kind: ResourceKind, description:
           { title: 'Abort', value: 'abort' as const }
         ]
       })
-    ).pipe(Effect.mapError(() => factoryError('cancelled')))
+    ).pipe(
+      Effect.mapError(() => factoryError('cancelled')),
+      promptLock.withPermits(1)
+    )
 
     if (choice === 'abort') return yield* factoryError(`aborted at ${description}`)
 
