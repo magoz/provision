@@ -456,7 +456,7 @@ passphrase read from the terminal: an agent that hides its variables still canno
 ```json
 {
   "contractVersion": 1,
-  "provisionVersion": "0.1.0",
+  "provisionVersion": "0.1.1",
   "commands": ["contract", "config", "factory", "env", "db"]
 }
 ```
