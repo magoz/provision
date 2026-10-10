@@ -2,7 +2,9 @@ import { Console, Effect, Option, Redacted } from 'effect'
 import { Argument, Command, Flag, Prompt } from 'effect/cli'
 import { report } from '../shared/output.ts'
 import { decodeCredentials, describeSections, readItemFields } from './onepassword.ts'
+import { readHiddenLine } from './passphrase.ts'
 import {
+  describeOpAuth,
   opCredentialFile,
   parseServiceAccountToken,
   removeServiceAccountToken,
@@ -217,7 +219,7 @@ const describeAuth = (auth: OpAuthSource) =>
   auth.kind === 'environment'
     ? 'service account (OP_SERVICE_ACCOUNT_TOKEN)'
     : auth.kind === 'credential'
-      ? `service account (${auth.file})`
+      ? `passphrase-protected service account (${auth.file})`
       : 'op session or desktop app'
 
 const readStdin = Effect.promise(async () => {
@@ -241,12 +243,7 @@ const opTokenSet = Command.make('set', { factory: factoryFlag }, ({ factory }) =
       const name = yield* validateFactoryName(factory)
       const raw =
         process.stdin.isTTY === true
-          ? yield* Prompt.run(
-              Prompt.Password({ message: '1Password service-account token (input hidden)' })
-            ).pipe(
-              Effect.map(value => Redacted.value(value)),
-              Effect.mapError(() => new RegistryError({ message: 'cancelled' }))
-            )
+          ? Redacted.value(yield* readHiddenLine('1Password service-account token: '))
           : yield* readStdin
       const token = yield* parseServiceAccountToken(raw)
       const file = yield* storeServiceAccountToken(name, token)
@@ -256,7 +253,7 @@ const opTokenSet = Command.make('set', { factory: factoryFlag }, ({ factory }) =
   )
 ).pipe(
   Command.withDescription(
-    'Store a 1Password service-account token (stdin or hidden prompt), encrypted with systemd-creds.'
+    'Store a factory service-account token (stdin or hidden prompt), sealed with the provision passphrase and systemd-creds.'
   )
 )
 
@@ -269,7 +266,7 @@ const opTokenStatus = Command.make('status', {}, () =>
       if (names.length === 0) return yield* Console.log('no factories registered')
 
       for (const name of names) {
-        yield* Console.log(`${name}: ${describeAuth(yield* resolveOpAuth(name))}`)
+        yield* Console.log(`${name}: ${yield* describeOpAuth(name)}`)
       }
     })
   )

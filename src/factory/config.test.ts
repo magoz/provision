@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Redacted } from 'effect'
 import { Command } from 'effect/cli'
 import { scriptedProcessLayer, type Invocation } from '../testing/scripted-process.ts'
-import { temporaryDirectory } from '../testing/temporary.ts'
+import { passphraseLayer, temporaryDirectory } from '../testing/temporary.ts'
 import { configCommand } from './config-commands.ts'
 import { decodeCredentials } from './onepassword.ts'
 import { RegistryLocation } from './registry.ts'
@@ -72,6 +72,7 @@ const setup = (item: Record<string, string>) =>
         invocation => (invocation.command === 'op' ? { stdout: opItem(item) } : { exitCode: 1 }),
         invocations
       ),
+      passphraseLayer(),
       Layer.succeed(RegistryLocation, { file })
     )
 

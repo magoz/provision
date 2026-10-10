@@ -1,11 +1,16 @@
 import { execFileSync } from 'node:child_process'
-import { stat, writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Redacted } from 'effect'
 import { Command } from 'effect/cli'
 import { scriptedProcessLayer, type Invocation } from '../testing/scripted-process.ts'
-import { nodeTestLayer, temporaryDirectory } from '../testing/temporary.ts'
+import {
+  nodeTestLayer,
+  passphraseLayer,
+  temporaryDirectory,
+  testPassphrase
+} from '../testing/temporary.ts'
 import { configCommand } from './config-commands.ts'
 import {
   parseServiceAccountToken,
@@ -14,8 +19,14 @@ import {
   storeServiceAccountToken
 } from './op-credential.ts'
 import { RegistryLocation } from './registry.ts'
+import { seal, unseal } from './sealed.ts'
 
 const token = `ops_${'a'.repeat(40)}`
+
+const otherToken = `ops_${'b'.repeat(40)}`
+
+/** Cheap KDF parameters for tests; production uses the defaults. */
+const testKdf = { N: 2 ** 10, r: 8, p: 1 }
 
 const systemdCredsAvailable = (() => {
   try {
@@ -26,6 +37,22 @@ const systemdCredsAvailable = (() => {
     return false
   }
 })()
+
+/** A systemd-creds stand-in that stores its input as the "encrypted" file. */
+const fakeCreds = (invocations: Array<Invocation>) =>
+  scriptedProcessLayer(invocation => {
+    if (invocation.command !== 'systemd-creds') return { stdout: JSON.stringify({ fields: [] }) }
+
+    if (invocation.args[1] === 'encrypt') {
+      return Effect.promise(() => writeFile(invocation.args[4] ?? '', invocation.input ?? '')).pipe(
+        Effect.as(undefined)
+      )
+    }
+
+    return Effect.promise(() => readFile(invocation.args[3] ?? '', 'utf8')).pipe(
+      Effect.map(stdout => ({ stdout }))
+    )
+  }, invocations)
 
 afterEach(() => {
   process.exitCode = undefined
@@ -41,33 +68,70 @@ describe('parseServiceAccountToken', () => {
   )
 })
 
-describe('stored service-account token', () => {
-  it.live('is decrypted per run and handed to op through its environment only', () =>
+describe('seal', () => {
+  it.effect('round-trips and rejects a wrong passphrase or another credential name', () =>
     Effect.gen(function* () {
-      const directory = yield* temporaryDirectory('provision-op-token')
-      const file = join(directory, 'config.json')
-      const invocations: Array<Invocation> = []
+      const sealed = yield* seal(
+        Redacted.make(testPassphrase),
+        Redacted.make(token),
+        'provision-op-acme',
+        testKdf
+      )
 
-      const layer = Layer.mergeAll(
-        scriptedProcessLayer(invocation => {
-          if (invocation.command === 'systemd-creds' && invocation.args[1] === 'encrypt') {
-            return Effect.promise(() => writeFile(invocation.args[4] ?? '', 'encrypted')).pipe(
-              Effect.as(undefined)
-            )
-          }
+      expect(sealed).not.toContain(token)
+      expect(
+        Redacted.value(yield* unseal(Redacted.make(testPassphrase), sealed, 'provision-op-acme'))
+      ).toBe(token)
 
-          if (invocation.command === 'systemd-creds') return { stdout: token }
+      const wrong = yield* unseal(
+        Redacted.make('wrong passphrase'),
+        sealed,
+        'provision-op-acme'
+      ).pipe(Effect.flip)
+      expect(wrong.reason).toBe('wrong-passphrase')
 
-          return { stdout: JSON.stringify({ fields: [] }) }
-        }, invocations),
+      const swapped = yield* unseal(
+        Redacted.make(testPassphrase),
+        sealed,
+        'provision-op-other'
+      ).pipe(Effect.flip)
+      expect(swapped.reason).toBe('wrong-passphrase')
+    })
+  )
+})
+
+const setup = (answer?: string) =>
+  Effect.gen(function* () {
+    const directory = yield* temporaryDirectory('provision-op-token')
+    const file = join(directory, 'config.json')
+    const invocations: Array<Invocation> = []
+    const layer = (passphrase?: string) =>
+      Layer.mergeAll(
+        fakeCreds(invocations),
+        passphraseLayer(passphrase ?? answer),
         Layer.succeed(RegistryLocation, { file })
       )
 
-      yield* Effect.gen(function* () {
-        yield* storeServiceAccountToken('acme', Redacted.make(token))
-        const auth = yield* resolveOpAuth('acme')
-        expect(auth.kind).toBe('credential')
-      }).pipe(Effect.provide(layer))
+    return { directory, file, invocations, layer }
+  })
+
+describe('stored service-account token', () => {
+  it.live('needs the passphrase and reaches op only through its environment', () =>
+    Effect.gen(function* () {
+      const { file, invocations, layer } = yield* setup()
+
+      yield* storeServiceAccountToken('acme', Redacted.make(token)).pipe(Effect.provide(layer()))
+
+      const stored = yield* Effect.promise(() =>
+        readFile(join(file, '..', 'op-service-account.acme.cred'), 'utf8')
+      )
+      expect(stored).not.toContain(token)
+
+      const wrong = yield* resolveOpAuth('acme').pipe(
+        Effect.provide(layer('not the passphrase')),
+        Effect.flip
+      )
+      expect(wrong.message).toContain('wrong passphrase')
 
       yield* Effect.promise(() =>
         writeFile(
@@ -77,17 +141,33 @@ describe('stored service-account token', () => {
       )
 
       yield* Command.runWith(configCommand, { version: 'test' })(['verify']).pipe(
-        Effect.provide(layer)
+        Effect.provide(layer())
       )
-
-      const encrypt = invocations.find(invocation => invocation.args[1] === 'encrypt')
-      expect(encrypt?.input).toBe(token)
-      expect(JSON.stringify(encrypt?.args)).not.toContain(token)
 
       const op = invocations.find(invocation => invocation.command === 'op')
       expect(op?.env).toEqual({ [serviceAccountTokenVariable]: token })
-      expect(JSON.stringify(op?.args)).not.toContain(token)
+      expect(JSON.stringify(invocations.map(invocation => invocation.args))).not.toContain(token)
       expect(process.env[serviceAccountTokenVariable]).toBeUndefined()
+    })
+  )
+
+  it.live('requires every factory token to share one passphrase', () =>
+    Effect.gen(function* () {
+      const { layer } = yield* setup()
+
+      yield* storeServiceAccountToken('acme', Redacted.make(token)).pipe(Effect.provide(layer()))
+
+      const mismatch = yield* storeServiceAccountToken('other', Redacted.make(otherToken)).pipe(
+        Effect.provide(layer('a different passphrase')),
+        Effect.flip
+      )
+      expect(mismatch.message).toContain('not the passphrase protecting the acme token')
+
+      yield* storeServiceAccountToken('other', Redacted.make(otherToken)).pipe(
+        Effect.provide(layer())
+      )
+      const resolved = yield* resolveOpAuth('other').pipe(Effect.provide(layer()))
+      expect(resolved.kind === 'credential' ? Redacted.value(resolved.token) : '').toBe(otherToken)
     })
   )
 })
@@ -95,11 +175,12 @@ describe('stored service-account token', () => {
 const describeSystemdCreds = systemdCredsAvailable ? describe : describe.skip
 
 describeSystemdCreds('systemd-creds', () => {
-  it.live('round-trips a token through the real systemd-creds', () =>
+  it.live('round-trips a sealed token through the real systemd-creds', () =>
     Effect.gen(function* () {
       const directory = yield* temporaryDirectory('provision-op-token-real')
       const layer = Layer.mergeAll(
         nodeTestLayer,
+        passphraseLayer(),
         Layer.succeed(RegistryLocation, { file: join(directory, 'config.json') })
       )
 
@@ -110,7 +191,6 @@ describeSystemdCreds('systemd-creds', () => {
         return yield* resolveOpAuth('acme')
       }).pipe(Effect.provide(layer))
 
-      expect(resolved.kind).toBe('credential')
       expect(resolved.kind === 'credential' ? Redacted.value(resolved.token) : '').toBe(token)
     })
   )

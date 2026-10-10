@@ -11,7 +11,7 @@ import {
   type FakeWorld
 } from '../testing/fake-factory.ts'
 import { scriptedProcessLayer, type Invocation } from '../testing/scripted-process.ts'
-import { temporaryDirectory } from '../testing/temporary.ts'
+import { passphraseLayer, temporaryDirectory } from '../testing/temporary.ts'
 import { factoryCommand, selectSteps } from './commands.ts'
 import { RegistryLocation } from './registry.ts'
 
@@ -81,6 +81,7 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
         invocations
       ),
       fakeProvidersLayer(world),
+      passphraseLayer(),
       Layer.succeed(RegistryLocation, { file: registry })
     )
 
@@ -304,6 +305,7 @@ describe('provision factory', () => {
       const layer = Layer.mergeAll(
         scriptedProcessLayer(() => undefined, invocations),
         fakeProvidersLayer(world),
+        passphraseLayer(),
         Layer.succeed(RegistryLocation, { file: join(repo, 'missing.json') })
       )
 

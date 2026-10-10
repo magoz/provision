@@ -55,19 +55,24 @@ provision config op-token set|remove --factory <name>
 provision config op-token status
 ```
 
-### 1Password authentication
+### 1Password authentication and approval
 
 `provision` reads factory items with the 1Password CLI, authenticated (first match wins) by:
 
 1. `OP_SERVICE_ACCOUNT_TOKEN` in the environment;
-2. the factory's stored service-account token: `provision config op-token set --factory <name>`
-   reads it from stdin (or a hidden prompt) and encrypts it with `systemd-creds --user`
-   (TPM2-bound where available) next to the registry; each run decrypts only that factory's token
-   and passes it to `op` only;
+2. the factory's stored read-only service-account token, sealed with the **provision passphrase**
+   (scrypt + AES-256-GCM) and then encrypted with `systemd-creds --user` (TPM2-bound where
+   available);
 3. the current `op` session (`eval "$(op signin)"`) or the desktop app integration.
 
-On a headless Linux host, create one read-only service account per factory, scoped to that
-factory's vault, and store it without the token ever touching the terminal or disk in clear:
+With stored tokens, the passphrase is the human approval: every command that reads a factory item
+(`config add`, `config verify`, `factory`) asks for it once on the controlling terminal, never
+from arguments, environment, or stdin, and refuses to run when not attached to a terminal. An
+agent can prepare a command, but only the operator can run it; one approval covers every step of
+the run. Each run unseals only the selected factory's token and passes it to its `op` child.
+
+Create one read-only service account per factory, scoped to that factory's vault. All factories
+share one passphrase, chosen when the first token is stored:
 
 ```bash
 eval "$(op signin)"
@@ -79,12 +84,19 @@ provision config op-token status
 ```
 
 `config add` records the item's `github.owner`, so `provision factory` reads only the selected
-factory's item with that factory's token.
-
-Service accounts cannot read Private vaults or the account's default Shared vault, and their
-permissions are fixed at creation. Without `--expires-in` a token never expires: rotate by
-creating a new service account, storing it, and revoking the old one under Developer > Service
+factory's item. Service accounts cannot read Private vaults or the account's default Shared vault,
+and their permissions are fixed at creation. Without `--expires-in` a token never expires: rotate
+by creating a new service account, storing it, and revoking the old one under Developer > Service
 accounts; revoke immediately if the host may be compromised.
+
+On a host shared with coding agents running as the same user, install `provision` root-owned and
+run approved commands by absolute path, so the code that receives the passphrase cannot be
+modified by an agent:
+
+```bash
+sudo npm install -g --prefix /usr/local @magoz/provision
+/usr/local/bin/provision factory --checkout ../acme-app --domain app.acme.test
+```
 
 `add` reads the item with `op` and refuses to save it unless it decodes. Item fields
 (`section.label`; a section counts only when all of its fields are present):

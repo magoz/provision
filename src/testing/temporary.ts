@@ -2,8 +2,9 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeServices } from '@effect/platform-node'
-import { Effect, Layer } from 'effect'
+import { Effect, Layer, Redacted } from 'effect'
 import { DbEnvironment } from '../db/environment.ts'
+import { makePassphrase, Passphrase } from '../factory/passphrase.ts'
 import { ProcessRunnerLive } from '../shared/process.ts'
 
 /** A temporary directory removed when the surrounding scope closes. */
@@ -34,3 +35,9 @@ export const dbEnvironmentLayer = (environment: DbTestEnvironment) =>
 /** Node platform services, the real process runner, and an isolated `DbEnvironment`. */
 export const dbTestLayer = (environment: DbTestEnvironment) =>
   Layer.mergeAll(nodeTestLayer, dbEnvironmentLayer(environment))
+
+export const testPassphrase = 'correct horse battery staple'
+
+/** Answers every passphrase prompt with `answer` (default: `testPassphrase`). */
+export const passphraseLayer = (answer: string = testPassphrase) =>
+  Layer.sync(Passphrase, () => makePassphrase(() => Effect.succeed(Redacted.make(answer))))

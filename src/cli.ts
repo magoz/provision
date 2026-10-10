@@ -9,6 +9,7 @@ import { DbEnvironmentLive } from './db/environment.ts'
 import { envCommand } from './env/commands.ts'
 import { factoryCommand } from './factory/commands.ts'
 import { configCommand } from './factory/config-commands.ts'
+import { PassphraseLive } from './factory/passphrase.ts'
 import { RegistryLocationLive } from './factory/registry.ts'
 import { readPackageInfo } from './package-info.ts'
 import { ProcessRunnerLive } from './shared/process.ts'
@@ -39,6 +40,7 @@ const AppLayer = Layer.mergeAll(
   FetchHttpClient.layer,
   DbEnvironmentLive,
   RegistryLocationLive,
+  PassphraseLive,
   ProcessRunnerLive
 ).pipe(Layer.provideMerge(NodeServices.layer))
 
