@@ -79,11 +79,13 @@ interface Initial {
 
 const fakeOnePassword = (initial: Initial) => {
   const edits: Array<ReadonlyArray<string>> = []
+  const creates: Array<ReadonlyArray<string>> = []
   const state = {
     ...initial,
     item: initial.item === undefined ? undefined : { ...initial.item },
     serviceAccounts: 0,
-    edits
+    edits,
+    creates
   }
 
   const script = (invocation: Invocation) => {
@@ -122,12 +124,12 @@ const fakeOnePassword = (initial: Initial) => {
     }
 
     if (noun === 'item' && verb === 'create') {
-      const template: {
-        fields: ReadonlyArray<{ label: string; section: { id: string } }>
-      } = JSON.parse(invocation.input ?? '{}')
       state.item = Object.fromEntries(
-        template.fields.map(field => [`${field.section.id}.${field.label}`, ''])
+        invocation.args
+          .filter(argument => argument.endsWith(']='))
+          .map(assignment => [assignment.replace(/\[.*$/, ''), ''])
       )
+      state.creates.push(invocation.args)
 
       return undefined
     }
@@ -220,6 +222,17 @@ describe('provision config add', () => {
         'item get'
       ])
       expect(onePassword.state.edits).toEqual([])
+      expect(onePassword.state.creates[0]?.slice(0, 8)).toEqual([
+        'item',
+        'create',
+        '--vault',
+        'provision-acme',
+        '--category',
+        'Secure Note',
+        '--title',
+        'provision'
+      ])
+      expect(onePassword.state.creates[0]).toContain('neon.api_key[password]=')
 
       const signin = invocations.find(invocation => invocation.args[0] === 'signin')
       expect(signin?.interactive).toBe(true)

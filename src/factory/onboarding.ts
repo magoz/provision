@@ -106,22 +106,9 @@ export const templateFields = [
   labels.map(label => ({ section, label, concealed: secretFields.has(label) }))
 )
 
-export const itemTemplate = (title: string) => {
-  const fields = templateFields.map(field => ({
-    id: `${field.section}_${field.label}`,
-    label: field.label,
-    section: { id: field.section },
-    type: field.concealed ? 'CONCEALED' : 'STRING',
-    value: ''
-  }))
-
-  return JSON.stringify({
-    title,
-    category: 'SECURE_NOTE',
-    sections: credentialSections.map(spec => ({ id: spec.section, label: spec.section })),
-    fields
-  })
-}
+/** `op` assignment statements that create each field empty (no values, so nothing secret). */
+const emptyFieldAssignments = (fields: ReadonlyArray<(typeof templateFields)[number]>) =>
+  fields.map(field => `${field.section}.${field.label}[${field.concealed ? 'password' : 'text'}]=`)
 
 const OpItemFields = Schema.fromJsonString(
   Schema.Struct({
@@ -165,9 +152,7 @@ const addMissingFields = (
   Effect.gen(function* () {
     if (missing.length === 0) return
 
-    const assignments = missing.map(
-      field => `${field.section}.${field.label}[${field.concealed ? 'password' : 'text'}]=`
-    )
+    const assignments = emptyFieldAssignments(missing)
     const edited = yield* capture('op', ['item', 'edit', item, '--vault', vault, ...assignments], {
       env
     })
@@ -206,10 +191,21 @@ const ensureItem = (env: SessionEnv, vault: string, item: string, options: Onboa
       return yield* failure(`item ${item} is required`)
     }
 
-    const created = yield* capture('op', ['item', 'create', '--vault', vault, '-'], {
-      env,
-      input: itemTemplate(item)
-    })
+    const created = yield* capture(
+      'op',
+      [
+        'item',
+        'create',
+        '--vault',
+        vault,
+        '--category',
+        'Secure Note',
+        '--title',
+        item,
+        ...emptyFieldAssignments(templateFields)
+      ],
+      { env }
+    )
 
     if (created.exitCode !== 0) {
       return yield* opFailure(`could not create item ${item} in ${vault}`, created)
