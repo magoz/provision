@@ -23,4 +23,14 @@ jobs:
       - name: Check tag matches package version
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
       - run: pnpm verify
-      - run: npm publish --provenance --access public
+      - name: Skip versions already on npm
+        id: published
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          version="$(node -p "require('./package.json').version")"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "$name@$version is already published; skipping"
+          fi
+      - if: steps.published.outputs.already != 'true'
+        run: npm publish --provenance --access public
