@@ -175,8 +175,12 @@ Where to get each value:
 - **`vercel.team_id`**: the team's immutable ID, not its slug: Vercel dashboard → team Settings →
   General → Team ID, or `vercel api /v2/teams`. It looks like `team_aBcDeFgH1234…`. Vercel calls use
   your own `vercel login`, which must be a member of that team.
-- **`neon.api_key`, `neon.org_id`**: Neon Console → Organization settings → API keys → create an
-  **organization** API key. The organization ID (`org-…`) is on the organization settings page.
+- **`neon.api_key`, `neon.org_id`**: a **personal** API key (Neon Console → your account settings
+  → API keys) of a member of the organization. Neon refuses organization API keys for creating
+  project-scoped keys, which the `neon` step needs. `provision` passes `org_id` on every call, so
+  it only works inside that organization, but the key itself reaches every organization the
+  account belongs to: keep it behind the passphrase like the other admin keys. The organization ID
+  (`org-…`) is on the organization's settings page.
 - **`cloudflare.api_token`, `cloudflare.account_id`**: in the Cloudflare dashboard, enable R2
   (R2 Object Storage; the free tier is enough). Then Manage Account → Account API Tokens → Create
   Token → Custom token with exactly two permissions, **Account · Workers R2 Storage · Edit** and
