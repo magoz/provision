@@ -1,10 +1,12 @@
-import { Console, Effect, Option, Redacted } from 'effect'
+import { Console, Effect, Option, Redacted, Result } from 'effect'
 import { Argument, Command, Flag, Prompt } from 'effect/cli'
 import { report } from '../shared/output.ts'
 import { decodeCredentials, describeSections, readItemFields } from './onepassword.ts'
+import { onboardFactory } from './onboarding.ts'
 import { readHiddenLine } from './passphrase.ts'
 import {
   describeOpAuth,
+  opAuthKind,
   opCredentialFile,
   parseServiceAccountToken,
   removeServiceAccountToken,
@@ -48,6 +50,18 @@ const valueOrPrompt = (value: Option.Option<string>, message: string, fallback?:
       : fallback === undefined
         ? Effect.fail(new RegistryError({ message: `${message}: pass it as a flag` }))
         : Effect.succeed(fallback)
+
+const sectionTable = (sections: ReturnType<typeof describeSections>) =>
+  sections
+    .map(
+      section =>
+        `  ${section.section.padEnd(16)} ${section.status}${section.status === 'partial' ? ` (missing ${section.missing.join(', ')})` : ''}`
+    )
+    .join('\n')
+
+/** Whether `op` already has a service-account credential for this factory. */
+const hasServiceAccount = (factory: string) =>
+  Effect.map(opAuthKind(factory), kind => kind !== 'session')
 
 const listFactories = (json: boolean) =>
   Effect.gen(function* () {
@@ -96,6 +110,10 @@ const add = Command.make(
     account: Flag.String('account').pipe(
       Flag.withDescription('1Password account (default: the CLI default)'),
       Flag.optional
+    ),
+    yes: Flag.Boolean('yes').pipe(
+      Flag.withDescription('create a missing vault or item without asking'),
+      Flag.withDefault(false)
     )
   },
   options =>
@@ -104,7 +122,7 @@ const add = Command.make(
         const name = yield* valueOrPrompt(options.name, 'Factory name').pipe(
           Effect.flatMap(validateFactoryName)
         )
-        const vault = yield* valueOrPrompt(options.vault, '1Password vault')
+        const vault = yield* valueOrPrompt(options.vault, '1Password vault', `provision-${name}`)
         const item = yield* valueOrPrompt(options.item, '1Password item', 'provision')
 
         const location: FactoryEntry = Option.match(options.account, {
@@ -112,27 +130,46 @@ const add = Command.make(
           onSome: account => ({ vault, item, account })
         })
 
-        // Refuse to register an item that cannot be read or is incomplete.
+        // First run: create the vault, item, and read-only service account with the operator's
+        // own sign-in. Reruns reuse the stored token and only need the passphrase.
+        if (!(yield* hasServiceAccount(name))) {
+          yield* onboardFactory(name, vault, item, { assumeYes: options.yes })
+        }
+
         const auth = yield* resolveOpAuth(name)
-        const inspected = yield* inspectFactory(location, auth)
+        const fields = yield* readItemFields(location, auth)
+        const sections = describeSections(fields)
+        const credentials = yield* Effect.result(decodeCredentials(fields))
+
+        if (Result.isFailure(credentials)) {
+          yield* Console.log(sectionTable(sections))
+
+          return yield* new RegistryError({
+            message:
+              `fill in the missing fields of item ${item} in vault ${vault} (1Password app or web), ` +
+              `then run: provision config add --name ${name} --vault ${vault}`
+          })
+        }
+
         const registry = yield* readRegistry
-        const entry: FactoryEntry = { ...location, githubOwner: inspected.githubOwner }
+        const entry: FactoryEntry = { ...location, githubOwner: credentials.success.githubOwner }
         yield* writeRegistry({ factories: { ...registry.factories, [name]: entry } })
 
+        yield* Console.log(sectionTable(sections))
         yield* report(false, {
           status: name in registry.factories ? 'updated' : 'added',
           factory: name,
           auth: describeAuth(auth),
-          github_owner: inspected.githubOwner,
-          vercel_team: inspected.vercelTeamId,
-          sections: inspected.sections
-            .filter(section => section.status === 'complete')
-            .map(section => section.section)
-            .join(', ')
+          github_owner: credentials.success.githubOwner,
+          vercel_team: credentials.success.vercel.teamId
         })
       })
     )
-).pipe(Command.withDescription('Register a factory 1Password item (verified before saving).'))
+).pipe(
+  Command.withDescription(
+    'Set up a factory: create its vault, item, and read-only service account if needed, then register it.'
+  )
+)
 
 const list = Command.make('list', { json: jsonFlag }, ({ json }) =>
   handled(listFactories(json))

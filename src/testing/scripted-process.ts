@@ -18,6 +18,7 @@ export interface Invocation {
   readonly cwd: string | undefined
   readonly input: string | undefined
   readonly env: Readonly<Record<string, string>> | undefined
+  readonly interactive: boolean
 }
 
 /**
@@ -49,7 +50,16 @@ export const scriptedProcessLayer = (
     command: string,
     args: ReadonlyArray<string>,
     options: ProcessOptions = {}
-  ) => answer({ mode, command, args, cwd: options.cwd, input: options.input, env: options.env })
+  ) =>
+    answer({
+      mode,
+      command,
+      args,
+      cwd: options.cwd,
+      input: options.input,
+      env: options.env,
+      interactive: options.interactive === true
+    })
 
   return Layer.effect(
     ProcessRunner,

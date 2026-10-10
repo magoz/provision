@@ -71,20 +71,21 @@ from arguments, environment, or stdin, and refuses to run when not attached to a
 agent can prepare a command, but only the operator can run it; one approval covers every step of
 the run. Each run unseals only the selected factory's token and passes it to its `op` child.
 
-Create one read-only service account per factory, scoped to that factory's vault. All factories
-share one passphrase, chosen when the first token is stored:
+`provision config add` sets a factory up interactively. The first time, it signs you in to
+1Password (that session lives only in the command and is signed out at the end), creates the vault
+and an empty `provision` item if they are missing, creates the factory's read-only service account
+(`provision-<name>`, `read_items` on that vault only), and stores its token. The first factory asks
+you to choose the passphrase; all factories share it. If the item still has empty fields, fill them
+in the 1Password app and run the same command again: reruns only need the passphrase.
 
 ```bash
-eval "$(op signin)"
-op service-account create provision-acme --vault provision-acme:read_items --raw \
-  | provision config op-token set --factory acme
-op signout
-provision config add --name acme --vault provision-acme
-provision config op-token status
+provision config add --name acme            # vault defaults to provision-acme
+provision config verify
 ```
 
 `config add` records the item's `github.owner`, so `provision factory` reads only the selected
-factory's item. Service accounts cannot read Private vaults or the account's default Shared vault,
+factory's item. `provision config op-token set --factory <name>` stores a token you created
+yourself (for example when rotating), read from stdin or a hidden prompt. Service accounts cannot read Private vaults or the account's default Shared vault,
 and their permissions are fixed at creation. Without `--expires-in` a token never expires: rotate
 by creating a new service account, storing it, and revoking the old one under Developer > Service
 accounts; revoke immediately if the host may be compromised.

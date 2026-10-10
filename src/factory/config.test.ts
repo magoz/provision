@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Redacted } from 'effect'
@@ -52,6 +52,74 @@ describe('decodeCredentials', () => {
   )
 })
 
+const sessionToken = 'operator-session-token'
+
+const serviceAccountToken = `ops_${'s'.repeat(40)}`
+
+/**
+ * A stateful 1Password and systemd-creds stand-in: vault, item, service account, and the
+ * operator session, plus the fields the operator "fills in" through `fill`.
+ */
+interface Initial {
+  readonly vault: boolean
+  readonly item: Record<string, string> | undefined
+  readonly failVaultCreate?: boolean
+}
+
+const fakeOnePassword = (initial: Initial) => {
+  const state = { ...initial, serviceAccounts: 0 }
+
+  const script = (invocation: Invocation) => {
+    const [noun, verb] = invocation.args
+
+    if (invocation.command === 'systemd-creds') {
+      return verb === 'encrypt'
+        ? Effect.promise(() => writeFile(invocation.args[4] ?? '', invocation.input ?? '')).pipe(
+            Effect.as(undefined)
+          )
+        : Effect.promise(() => readFile(invocation.args[3] ?? '', 'utf8')).pipe(
+            Effect.map(stdout => ({ stdout }))
+          )
+    }
+
+    if (noun === 'account') return { stdout: '[{"url":"https://my.1password.com"}]' }
+
+    if (noun === 'signin') return { stdout: `export OP_SESSION_abc="${sessionToken}"\n` }
+
+    if (noun === 'signout') return undefined
+
+    if (noun === 'vault' && verb === 'get') return { exitCode: state.vault ? 0 : 1 }
+
+    if (noun === 'vault' && verb === 'create') {
+      if (initial.failVaultCreate === true) return { exitCode: 1 }
+
+      state.vault = true
+
+      return undefined
+    }
+
+    if (noun === 'service-account') {
+      state.serviceAccounts += 1
+
+      return { stdout: `${serviceAccountToken}\n` }
+    }
+
+    if (noun === 'item' && verb === 'create') {
+      state.item = {}
+
+      return undefined
+    }
+
+    if (noun === 'item' && verb === 'get') {
+      return state.item === undefined ? { exitCode: 1 } : { stdout: opItem(state.item) }
+    }
+
+    return { exitCode: 1 }
+  }
+
+  return { state, script }
+}
+
 const opItem = (entries: Record<string, string>) =>
   JSON.stringify({
     fields: Object.entries(entries).map(([key, value]) => {
@@ -61,17 +129,15 @@ const opItem = (entries: Record<string, string>) =>
     })
   })
 
-const setup = (item: Record<string, string>) =>
+const setup = (initial: Initial) =>
   Effect.gen(function* () {
     const directory = yield* temporaryDirectory('provision-registry')
     const file = join(directory, 'provision', 'config.json')
     const invocations: Array<Invocation> = []
+    const onePassword = fakeOnePassword(initial)
 
     const layer = Layer.mergeAll(
-      scriptedProcessLayer(
-        invocation => (invocation.command === 'op' ? { stdout: opItem(item) } : { exitCode: 1 }),
-        invocations
-      ),
+      scriptedProcessLayer(onePassword.script, invocations),
       passphraseLayer(),
       Layer.succeed(RegistryLocation, { file })
     )
@@ -81,69 +147,121 @@ const setup = (item: Record<string, string>) =>
 
     const registry = Effect.promise(() => readFile(file, 'utf8').catch(() => undefined))
 
-    return { file, invocations, run, registry }
+    return { directory, file, invocations, onePassword, run, registry }
   })
 
-describe('provision config', () => {
-  it.live('adds a verified factory to a private registry', () =>
-    Effect.gen(function* () {
-      const { file, invocations, run, registry } = yield* setup(base)
+const add = ['add', '--name', 'acme', '--vault', 'provision-acme', '--yes'] as const
 
-      yield* run(
-        'add',
-        '--name',
-        'acme',
+const opCalls = (invocations: ReadonlyArray<Invocation>) =>
+  invocations
+    .filter(invocation => invocation.command === 'op')
+    .map(invocation => invocation.args.slice(0, 2).join(' '))
+
+describe('provision config add', () => {
+  it.live('sets up a new factory end to end, pausing for the operator to fill the item', () =>
+    Effect.gen(function* () {
+      const { file, invocations, onePassword, run, registry } = yield* setup({
+        vault: false,
+        item: undefined
+      })
+
+      yield* run(...add)
+
+      expect(process.exitCode).toBe(2)
+      expect(yield* registry).toBeUndefined()
+      expect(onePassword.state.vault).toBe(true)
+      expect(onePassword.state.item).toEqual({})
+      expect(onePassword.state.serviceAccounts).toBe(1)
+      expect(opCalls(invocations)).toEqual([
+        'account list',
+        'signin',
+        'vault get',
+        'vault create',
+        'item get',
+        'item create',
+        'service-account create',
+        'signout',
+        'item get'
+      ])
+
+      const signin = invocations.find(invocation => invocation.args[0] === 'signin')
+      expect(signin?.interactive).toBe(true)
+
+      const create = invocations.find(invocation => invocation.args[0] === 'service-account')
+      expect(create?.args).toEqual([
+        'service-account',
+        'create',
+        'provision-acme',
         '--vault',
-        'provision-factory-acme',
-        '--item',
-        'provision'
-      )
+        'provision-acme:read_items',
+        '--raw'
+      ])
+      expect(create?.env).toEqual({ OP_SESSION_abc: sessionToken })
+
+      const read = invocations.filter(invocation => invocation.args[0] === 'item').at(-1)
+      expect(read?.env).toEqual({ OP_SERVICE_ACCOUNT_TOKEN: serviceAccountToken })
+
+      // The operator fills in the item; the rerun needs only the passphrase.
+      onePassword.state.item = base
+      process.exitCode = undefined
+      const before = invocations.length
+      yield* run(...add)
 
       expect(process.exitCode).toBeUndefined()
+      expect(opCalls(invocations.slice(before))).toEqual(['item get'])
+      expect(onePassword.state.serviceAccounts).toBe(1)
       expect(JSON.parse((yield* registry) ?? '{}')).toEqual({
-        factories: {
-          acme: { vault: 'provision-factory-acme', item: 'provision', githubOwner: 'acme' }
-        }
+        factories: { acme: { vault: 'provision-acme', item: 'provision', githubOwner: 'acme' } }
       })
       expect((yield* Effect.promise(() => stat(file))).mode & 0o777).toBe(0o600)
-      expect(invocations[0]?.args).toEqual([
-        'item',
-        'get',
-        'provision',
-        '--vault',
-        'provision-factory-acme',
-        '--format',
-        'json',
-        '--reveal'
-      ])
+
+      const argv = JSON.stringify(invocations.map(invocation => invocation.args))
+      expect(argv).not.toContain(sessionToken)
+      expect(argv).not.toContain(serviceAccountToken)
 
       yield* run('remove', 'acme')
       expect(JSON.parse((yield* registry) ?? '{}')).toEqual({ factories: {} })
     })
   )
 
-  it.live('refuses to register an incomplete item', () =>
+  it.live('reuses an existing vault and item', () =>
     Effect.gen(function* () {
-      const { run, registry } = yield* setup({ ...base, 'neon.api_key': 'key' })
+      const { invocations, run } = yield* setup({ vault: true, item: base })
 
-      yield* run(
-        'add',
-        '--name',
-        'acme',
-        '--vault',
-        'provision-factory-acme',
-        '--item',
-        'provision'
-      )
+      yield* run(...add)
+
+      expect(process.exitCode).toBeUndefined()
+      expect(opCalls(invocations)).toEqual([
+        'account list',
+        'signin',
+        'vault get',
+        'item get',
+        'service-account create',
+        'signout',
+        'item get'
+      ])
+    })
+  )
+
+  it.live('signs out even when setup fails', () =>
+    Effect.gen(function* () {
+      const { invocations, run } = yield* setup({
+        vault: false,
+        item: undefined,
+        failVaultCreate: true
+      })
+
+      yield* run(...add)
 
       expect(process.exitCode).toBe(2)
-      expect(yield* registry).toBeUndefined()
+      expect(opCalls(invocations).at(-1)).toBe('signout')
+      expect(opCalls(invocations)).not.toContain('service-account create')
     })
   )
 
   it.live('rejects invalid factory names', () =>
     Effect.gen(function* () {
-      const { invocations, run } = yield* setup(base)
+      const { invocations, run } = yield* setup({ vault: true, item: base })
 
       yield* run('add', '--name', 'Acme Corp', '--vault', 'v', '--item', 'i')
 

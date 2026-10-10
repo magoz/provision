@@ -25,6 +25,11 @@ export interface ProcessOptions {
   readonly input?: string
   /** Extra variables for this child only (secrets never enter our own environment or argv). */
   readonly env?: Readonly<Record<string, string>>
+  /**
+   * Capture only: attach stdin and stderr to our terminal so the child can prompt the operator
+   * (for example `op signin`), while stdout is still captured.
+   */
+  readonly interactive?: boolean
 }
 
 /**
@@ -68,18 +73,22 @@ export const makeProcessRunner = Effect.gen(function* () {
               cwd: options.cwd,
               ...(options.env === undefined ? {} : { env: options.env, extendEnv: true }),
               stdin:
-                options.input === undefined
-                  ? 'ignore'
-                  : Stream.make(new TextEncoder().encode(options.input)),
+                options.interactive === true
+                  ? 'inherit'
+                  : options.input === undefined
+                    ? 'ignore'
+                    : Stream.make(new TextEncoder().encode(options.input)),
               stdout: 'pipe',
-              stderr: 'pipe'
+              stderr: options.interactive === true ? 'inherit' : 'pipe'
             })
           )
 
           const [stdout, stderr, exitCode] = yield* Effect.all(
             [
               Stream.mkString(Stream.decodeText(handle.stdout)),
-              Stream.mkString(Stream.decodeText(handle.stderr)),
+              options.interactive === true
+                ? Effect.succeed('')
+                : Stream.mkString(Stream.decodeText(handle.stderr)),
               handle.exitCode
             ],
             { concurrency: 3 }

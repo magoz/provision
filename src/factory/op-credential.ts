@@ -181,19 +181,32 @@ export type OpAuthSource =
     }
   | { readonly kind: 'session' }
 
+export type OpAuthKind = OpAuthSource['kind']
+
 /** Where `op` credentials would come from for a factory, without prompting or decrypting. */
-export const describeOpAuth = (factory: string) =>
+export const opAuthKind = (factory: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
 
     if ((process.env[serviceAccountTokenVariable] ?? '').trim() !== '') {
-      return 'service account (OP_SERVICE_ACCOUNT_TOKEN)'
+      return 'environment' satisfies OpAuthKind
     }
 
     const file = yield* opCredentialFile(factory)
     const exists = yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))
 
-    return exists ? `passphrase-protected service account (${file})` : 'op session or desktop app'
+    return exists ? ('credential' satisfies OpAuthKind) : ('session' satisfies OpAuthKind)
+  })
+
+export const describeOpAuth = (factory: string) =>
+  Effect.gen(function* () {
+    const kind = yield* opAuthKind(factory)
+
+    return kind === 'environment'
+      ? 'service account (OP_SERVICE_ACCOUNT_TOKEN)'
+      : kind === 'credential'
+        ? `passphrase-protected service account (${yield* opCredentialFile(factory)})`
+        : 'op session or desktop app'
   })
 
 /** Resolves how `op` authenticates for one factory; a stored token needs the passphrase. */
