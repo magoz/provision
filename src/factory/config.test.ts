@@ -372,6 +372,20 @@ describe('provision config add', () => {
     })
   )
 
+  it.live('reports an invalid value instead of asking to fill the item', () =>
+    Effect.gen(function* () {
+      const { run, registry } = yield* setup({
+        vault: true,
+        item: { ...base, 'vercel.team_id': 'acme' }
+      })
+
+      yield* run(...add)
+
+      expect(process.exitCode).toBe(2)
+      expect(yield* registry).toBeUndefined()
+    })
+  )
+
   it.live('rejects invalid factory names', () =>
     Effect.gen(function* () {
       const { invocations, run } = yield* setup({ vault: true, item: base })

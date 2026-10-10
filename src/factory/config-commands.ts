@@ -180,6 +180,21 @@ const add = Command.make(
         const sections = describeSections(fields)
         const credentials = yield* Effect.result(decodeCredentials(fields))
 
+        const incomplete = sections.some(
+          section =>
+            section.status === 'partial' ||
+            (section.status === 'absent' && requiredSections.has(section.section))
+        )
+
+        // Every section is filled but a value is invalid: say which, not "fill in the item".
+        if (Result.isFailure(credentials) && !incomplete) {
+          yield* Console.log(sectionTable(sections))
+
+          return yield* new RegistryError({
+            message: `${credentials.failure.message} (item ${item} in vault ${vault})`
+          })
+        }
+
         if (Result.isFailure(credentials)) {
           yield* Console.log(
             [
