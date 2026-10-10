@@ -51,19 +51,56 @@ const corsRules = (origin: string) => [
   }
 ]
 
+const CorsRule = Schema.Struct({
+  allowed: Schema.Struct({
+    methods: Schema.Array(Schema.String),
+    origins: Schema.Array(Schema.String),
+    headers: Schema.optionalKey(Schema.Array(Schema.String))
+  }),
+  exposeHeaders: Schema.optionalKey(Schema.Array(Schema.String)),
+  maxAgeSeconds: Schema.optionalKey(Schema.Number)
+})
+
+type CorsRule = typeof CorsRule.Type
+
+const normalize = (values: ReadonlyArray<string>) =>
+  [...new Set(values.map(value => value.toLowerCase()))].toSorted().join('\n')
+
+const sameSet = (left: ReadonlyArray<string> = [], right: ReadonlyArray<string> = []) =>
+  normalize(left) === normalize(right)
+
+/**
+ * Whether `rules` grant exactly the upload policy for `origin`. Compares values, not JSON text:
+ * the API may reorder fields, drop the rule id, or change header case.
+ */
+export const corsRulesMatch = (rules: ReadonlyArray<CorsRule>, origin: string) => {
+  const [actual, ...rest] = rules
+  const [expected] = corsRules(origin)
+
+  return (
+    actual !== undefined &&
+    expected !== undefined &&
+    rest.length === 0 &&
+    sameSet(actual.allowed.methods, expected.allowed.methods) &&
+    sameSet(actual.allowed.origins, expected.allowed.origins) &&
+    sameSet(actual.allowed.headers, expected.allowed.headers) &&
+    sameSet(actual.exposeHeaders, expected.exposeHeaders) &&
+    actual.maxAgeSeconds === expected.maxAgeSeconds
+  )
+}
+
 /** Whether the bucket already has exactly the upload CORS policy for `origin`. */
 export const bucketCorsMatches = (admin: CloudflareAdmin, name: string, origin: string) =>
   requestJson(
     'R2 CORS lookup',
     `${account(admin)}/r2/buckets/${encodeURIComponent(name)}/cors`,
-    envelope(Schema.Struct({ rules: Schema.Unknown })),
+    envelope(Schema.Struct({ rules: Schema.Array(CorsRule) })),
     { headers: headers(admin.apiToken), allowNotFound: true }
   ).pipe(
     Effect.map(
       Option.match({
         onNone: () => false,
-        onSome: response =>
-          JSON.stringify(response.result.rules) === JSON.stringify(corsRules(origin))
+        onSome: response => corsRulesMatch(response.result.rules, origin)
       })
     )
   )
