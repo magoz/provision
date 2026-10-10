@@ -17,6 +17,23 @@ const OpItem = Schema.fromJsonString(
   Schema.Struct({ fields: Schema.optional(Schema.Array(OpField)) })
 )
 
+/**
+ * The first `[ERROR]` line of `op`'s stderr, without its timestamp. `op` error messages name
+ * items, vaults, and permissions, never secret values.
+ */
+export const opErrorMessage = (stderr: string) => {
+  const line = stderr
+    // oxlint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;]*m/g, '')
+    .split('\n')
+    .map(candidate => candidate.trim())
+    .find(candidate => candidate.length > 0)
+
+  return line === undefined
+    ? undefined
+    : line.replace(/^\[ERROR\]\s*\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2}\s*/, '').slice(0, 300)
+}
+
 /** Item fields keyed `section.label` (or `label` without a section); values stay redacted. */
 export type ItemFields = ReadonlyMap<string, Redacted.Redacted<string>>
 
@@ -41,9 +58,12 @@ export const readItemJson = (entry: FactoryEntry, auth: OpAuthSource) =>
     )
 
     if (result.exitCode !== 0) {
+      const reason = opErrorMessage(result.stderr)
+
       return yield* new CredentialsError({
         message:
-          `cannot read 1Password item ${entry.item} in vault ${entry.vault} (op exit ${result.exitCode}); ` +
+          `cannot read 1Password item ${entry.item} in vault ${entry.vault} (op exit ${result.exitCode}` +
+          `${reason === undefined ? '' : `: ${reason}`}); ` +
           (auth.kind === 'session'
             ? 'sign in with `eval "$(op signin)"` or store a service-account token with `provision config op-token set`'
             : 'check that the service account has read access to this vault')

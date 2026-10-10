@@ -6,7 +6,7 @@ import { Command } from 'effect/cli'
 import { scriptedProcessLayer, type Invocation } from '../testing/scripted-process.ts'
 import { passphraseLayer, temporaryDirectory } from '../testing/temporary.ts'
 import { configCommand } from './config-commands.ts'
-import { decodeCredentials } from './onepassword.ts'
+import { decodeCredentials, opErrorMessage } from './onepassword.ts'
 import { RegistryLocation } from './registry.ts'
 
 const fields = (entries: Record<string, string>) =>
@@ -16,6 +16,17 @@ const base = { 'github.owner': 'acme', 'vercel.team_id': 'team_acme' }
 
 afterEach(() => {
   process.exitCode = undefined
+})
+
+describe('opErrorMessage', () => {
+  it('keeps the first error line without its timestamp or colors', () => {
+    expect(
+      opErrorMessage(
+        '\u001b[31m[ERROR] 2026/10/10 06:58:01 "provision" isn\'t an item in the "acme" vault.\u001b[0m\nmore\n'
+      )
+    ).toBe('"provision" isn\'t an item in the "acme" vault.')
+    expect(opErrorMessage('')).toBeUndefined()
+  })
 })
 
 describe('decodeCredentials', () => {
