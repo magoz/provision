@@ -14,9 +14,41 @@ export interface JsonRequest {
   readonly allowNotFound?: boolean
 }
 
+const ErrorBody = Schema.Struct({
+  message: Schema.optionalKey(Schema.String),
+  error: Schema.optionalKey(Schema.Struct({ message: Schema.optionalKey(Schema.String) })),
+  errors: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ message: Schema.optionalKey(Schema.String) }))
+  )
+})
+
 /**
- * A provider JSON request. Failures name only the action and status: response bodies, URLs with
- * query strings, and credentials never reach errors or output.
+ * The provider's own error message (`message`, `error.message`, or `errors[0].message`), cleaned
+ * for display: one line, at most 160 characters, and any long token-like run (24+ characters
+ * without spaces) replaced, so an echoed credential can never reach the output.
+ */
+export const providerErrorMessage = (body: unknown) =>
+  Schema.decodeUnknownOption(ErrorBody)(body).pipe(
+    Option.flatMap(parsed =>
+      Option.fromUndefinedOr(parsed.message ?? parsed.error?.message ?? parsed.errors?.[0]?.message)
+    ),
+    Option.map(message =>
+      message
+        .split('')
+        .map(character => (character < ' ' || character === '\u007f' ? ' ' : character))
+        .join('')
+        .replaceAll(/\s+/g, ' ')
+        .replaceAll(/[^\s"'`]{24,}/g, '…')
+        .trim()
+        .slice(0, 160)
+    ),
+    Option.filter(message => message !== '')
+  )
+
+/**
+ * A provider JSON request. Failures name the action, the status, and the provider's cleaned error
+ * message; other response content, URLs with query strings, and credentials never reach errors or
+ * output.
  */
 export const requestJson = <S extends Schema.Constraint>(
   label: string,
@@ -46,8 +78,16 @@ export const requestJson = <S extends Schema.Constraint>(
     }
 
     if (response.status >= 400) {
+      const detail = yield* response.json.pipe(
+        Effect.map(providerErrorMessage),
+        Effect.orElseSucceed(() => Option.none<string>())
+      )
+
       return yield* new ProviderError({
-        message: `${label} failed (${response.status}); provider response suppressed`,
+        message: `${label} failed (${response.status})${Option.match(detail, {
+          onNone: () => '',
+          onSome: message => `: ${message}`
+        })}`,
         status: response.status
       })
     }

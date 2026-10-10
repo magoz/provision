@@ -28,9 +28,10 @@ export type OnExisting = (typeof onExistingPolicies)[number]
  * - `data`: holds data (Neon projects, R2 buckets, Upstash teams, the Vercel project); never
  *   deleted or replaced, only reused;
  * - `key`: a scoped credential; overwriting rotates it;
- * - `secret`: a generated app secret; overwriting invalidates what depends on it.
+ * - `secret`: a generated app secret; overwriting invalidates what depends on it;
+ * - `setting`: a plain value (for example the sender address); overwriting just replaces it.
  */
-export type ResourceKind = 'data' | 'key' | 'secret'
+export type ResourceKind = 'data' | 'key' | 'secret' | 'setting'
 
 export interface FactoryContext {
   readonly factory: string

@@ -113,6 +113,7 @@ const ensure = (
   handle: ProjectHandle,
   records: ReadonlyArray<EnvRecord>,
   group: EnvGroup,
+  kind: 'secret' | 'setting',
   description: string,
   keys: ReadonlyArray<string>,
   entries: () => ReadonlyArray<EnvEntry>
@@ -122,7 +123,7 @@ const ensure = (
 
     if (state !== 'none') {
       const partly = state === 'partial' ? ', set only in part of it' : ''
-      const decision = yield* decide(context, 'secret', `${description} (${group.label}${partly})`)
+      const decision = yield* decide(context, kind, `${description} (${group.label}${partly})`)
 
       if (decision === 'reuse') return
     }
@@ -178,7 +179,7 @@ export const secretsStep = (context: FactoryContext) =>
         [groups.preproduction, 'encrypted'],
         [groups.production, 'sensitive']
       ] as const) {
-        yield* ensure(context, handle.value, records, group, keys.join(', '), keys, () =>
+        yield* ensure(context, handle.value, records, group, 'secret', keys.join(', '), keys, () =>
           generate(spec, type)
         )
       }
@@ -191,8 +192,15 @@ export const secretsStep = (context: FactoryContext) =>
         type: 'plain'
       }
 
-      yield* ensure(context, handle.value, records, groups.all, entry.key, [entry.key], () => [
-        entry
-      ])
+      yield* ensure(
+        context,
+        handle.value,
+        records,
+        groups.all,
+        'setting',
+        entry.key,
+        [entry.key],
+        () => [entry]
+      )
     }
   })

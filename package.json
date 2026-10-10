@@ -1,6 +1,6 @@
 {
   "name": "@magoz/provision",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Provision projects (factory), local checkouts (env), and disposable databases (db).",
   "license": "MIT",
   "repository": {
