@@ -28,9 +28,14 @@ const otherToken = `ops_${'b'.repeat(40)}`
 /** Cheap KDF parameters for tests; production uses the defaults. */
 const testKdf = { N: 2 ** 10, r: 8, p: 1 }
 
+// A real per-user encryption, not just `--version`: CI runners ship systemd-creds without a usable
+// user credential key.
 const systemdCredsAvailable = (() => {
   try {
-    execFileSync('systemd-creds', ['--version'], { stdio: 'ignore' })
+    execFileSync('systemd-creds', ['--user', 'encrypt', '--name=provision-probe', '-', '-'], {
+      input: 'probe',
+      stdio: ['pipe', 'ignore', 'ignore']
+    })
 
     return true
   } catch {
