@@ -386,6 +386,25 @@ describe('provision config add', () => {
     })
   )
 
+  it.live('hands config add and verify to the human when an agent runs them', () =>
+    Effect.gen(function* () {
+      const { invocations, run, registry } = yield* setup({ vault: true, item: base })
+
+      process.env['AI_AGENT'] = 'acme-agent'
+      yield* Effect.gen(function* () {
+        yield* run(...add)
+        expect(process.exitCode).toBe(4)
+
+        process.exitCode = undefined
+        yield* run('verify')
+        expect(process.exitCode).toBe(4)
+      }).pipe(Effect.ensuring(Effect.sync(() => delete process.env['AI_AGENT'])))
+
+      expect(invocations).toEqual([])
+      expect(yield* registry).toBeUndefined()
+    })
+  )
+
   it.live('rejects invalid factory names', () =>
     Effect.gen(function* () {
       const { invocations, run } = yield* setup({ vault: true, item: base })

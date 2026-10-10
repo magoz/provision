@@ -1,5 +1,6 @@
 import { Console, Effect, Option, Redacted, Result } from 'effect'
 import { Argument, Command, Flag, Prompt } from 'effect/cli'
+import { humanOnly } from './approval.ts'
 import { report } from '../shared/output.ts'
 import {
   decodeCredentials,
@@ -39,6 +40,10 @@ const handled = <A, E extends { readonly message: string }, R>(effect: Effect.Ef
       Console.error(`provision config: ${error.message}`).pipe(Effect.andThen(setExitCode(2)))
     )
   )
+
+/** `handled`, for commands that read factory items: only a human can approve them. */
+const approved = <A, E extends { readonly message: string }, R>(effect: Effect.Effect<A, E, R>) =>
+  humanOnly(handled(effect))
 
 const jsonFlag = Flag.Boolean('json').pipe(
   Flag.withDescription('machine-readable output'),
@@ -132,7 +137,7 @@ const add = Command.make(
     )
   },
   options =>
-    handled(
+    approved(
       Effect.gen(function* () {
         const name = yield* valueOrPrompt(options.name, 'Factory name').pipe(
           Effect.flatMap(validateFactoryName)
@@ -264,7 +269,7 @@ const verify = Command.make(
     json: jsonFlag
   },
   ({ json, name }) =>
-    handled(
+    approved(
       Effect.gen(function* () {
         const registry = yield* readRegistry
 
@@ -335,7 +340,7 @@ const factoryFlag = Flag.String('factory').pipe(
 )
 
 const opTokenSet = Command.make('set', { factory: factoryFlag }, ({ factory }) =>
-  handled(
+  approved(
     Effect.gen(function* () {
       const name = yield* validateFactoryName(factory)
       const raw =

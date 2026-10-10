@@ -397,6 +397,29 @@ The skill is also included in the npm package, under `skills/provision/`.
 | ---------------------------------------------------------------- | --------------------------------------------------------------- |
 | `env`, `db`, `contract`, `config list`, `config op-token status` | `factory`, `config add`, `config verify`, `config op-token set` |
 
+`provision` detects coding agents from the environment variables they set (`AI_AGENT`,
+`CLAUDECODE`, `OPENCODE`, `CODEX_THREAD_ID`, `CURSOR_AGENT`, `GEMINI_CLI`, and others; the same
+signals as `@vercel/detect-agent`). Under an agent:
+
+- the human-only commands change nothing and exit 4 with the exact command for the human to run,
+  from the same directory, as JSON on stderr:
+
+  ```json
+  {
+    "status": "approval_required",
+    "reason": "this command reads factory admin keys and needs the provision passphrase, typed by a human in a terminal; claude cannot approve it",
+    "hint": "ask the human to run the next command in their own terminal and paste its output; never ask for the passphrase",
+    "next": [
+      "cd /home/acme/src && /usr/local/bin/provision factory --checkout acme-app --domain app.acme.com --dry-run"
+    ]
+  }
+  ```
+
+- `provision env` never prompts, as with `--non-interactive`.
+
+Detection only shapes the experience. What stops an agent from approving a factory run is the
+passphrase read from the terminal: an agent that hides its variables still cannot type it.
+
 ## Contract and exit codes
 
 `provision contract` prints the machine-readable contract other tools rely on:
@@ -418,19 +441,21 @@ Check `commands` for the capabilities you need.
 | 1    | negative result: `db status` without a lease or branch, `db auth status` unauthenticated or invalid, `db gc` with inaccessible leases (unless `--prune-expired`), or a CLI usage error |
 | 2    | expected failure, reported as one `provision <mode>: …` line on stderr                                                                                                                 |
 | 3    | `provision env`: Vercel link required (JSON on stderr)                                                                                                                                 |
+| 4    | a coding agent ran a command only a human can approve; nothing changed (JSON with the command to run on stderr)                                                                        |
 
 ## Troubleshooting
 
-| Message                                                             | Fix                                                                                  |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| `vercel.team_id must be an immutable team_* identifier`             | use the team ID (`team_…`), not the slug or URL                                      |
-| `partial: also fill <field>` in `config add`                        | fill the missing fields, or clear the whole section if the factory does not use it   |
-| `Resend domain … must be verified in the factory's Resend account`  | verify the domain in Resend, or pass `--email-from` with an already verified domain  |
-| `factory … serves GitHub owner …, not …`                            | the checkout's `origin` belongs to another owner; pass `--factory` or fix the remote |
-| `Vercel project … does not exist; run the vercel step first`        | run without `--only`, or include `vercel`                                            |
-| `… already exists and prompting is unavailable; pass --on-existing` | run in a terminal, or choose `--on-existing reuse`                                   |
-| `systemd-creds is unavailable`                                      | use `op signin` or `OP_SERVICE_ACCOUNT_TOKEN` instead of a stored token              |
-| `env` exits 3                                                       | pass `--source <linked checkout>` or `--vercel-project <name>`                       |
+| Message                                                             | Fix                                                                                                         |
+| ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `vercel.team_id must be an immutable team_* identifier`             | use the team ID (`team_…`), not the slug or URL                                                             |
+| `partial: also fill <field>` in `config add`                        | fill the missing fields, or clear the whole section if the factory does not use it                          |
+| `Resend domain … must be verified in the factory's Resend account`  | verify the domain in Resend, or pass `--email-from` with an already verified domain                         |
+| `factory … serves GitHub owner …, not …`                            | the checkout's `origin` belongs to another owner; pass `--factory` or fix the remote                        |
+| `Vercel project … does not exist; run the vercel step first`        | run without `--only`, or include `vercel`                                                                   |
+| `… already exists and prompting is unavailable; pass --on-existing` | run in a terminal, or choose `--on-existing reuse`                                                          |
+| `systemd-creds is unavailable`                                      | use `op signin` or `OP_SERVICE_ACCOUNT_TOKEN` instead of a stored token                                     |
+| `env` exits 3                                                       | pass `--source <linked checkout>` or `--vercel-project <name>`                                              |
+| exit 4 `approval_required` in your own terminal                     | the shell inherited an agent's variables (for example started from an agent session); open a fresh terminal |
 
 ## Development
 

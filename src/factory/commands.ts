@@ -4,6 +4,7 @@ import { Command, Flag } from 'effect/cli'
 import { resolveAppDirectory } from '../env/paths.ts'
 import { resolveWorkspace } from '../shared/git.ts'
 import { factorySteps, readRepoConfig, type FactoryStep } from '../shared/repo-config.ts'
+import { humanOnly } from './approval.ts'
 import {
   factoryError,
   onExistingPolicies,
@@ -283,13 +284,15 @@ export const factoryCommand = Command.make(
     )
   },
   options =>
-    runFactory(options).pipe(
-      Effect.catch(error =>
-        Console.error(`provision factory: ${error.message}`).pipe(
-          Effect.andThen(
-            Effect.sync(() => {
-              process.exitCode = 2
-            })
+    humanOnly(
+      runFactory(options).pipe(
+        Effect.catch(error =>
+          Console.error(`provision factory: ${error.message}`).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                process.exitCode = 2
+              })
+            )
           )
         )
       )

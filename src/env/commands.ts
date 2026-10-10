@@ -1,5 +1,6 @@
 import { Console, Effect, Option } from 'effect'
 import { Command, Flag } from 'effect/cli'
+import { detectAgent } from '../shared/agent.ts'
 import { envConflictPolicies } from './domain.ts'
 import { provisionEnvironment } from './provision.ts'
 
@@ -59,6 +60,8 @@ export const envCommand = Command.make(
   options =>
     provisionEnvironment({
       ...options,
+      // Agents cannot answer prompts; fail safely instead, as with --non-interactive.
+      nonInteractive: options.nonInteractive || detectAgent() !== undefined,
       appDir: Option.getOrUndefined(options.appDir),
       source: Option.getOrUndefined(options.source),
       vercelProject: Option.getOrUndefined(options.vercelProject),

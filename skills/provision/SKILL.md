@@ -22,17 +22,30 @@ configures it (`appDir`, `setup`, `factory.steps`).
 | `provision config list`, `provision config op-token status`       | you                              |
 | `provision factory …`, `provision config add/verify/op-token set` | **the human, in their terminal** |
 
-Commands that read a factory's 1Password item ask for the operator's **provision passphrase** on
-the controlling terminal and refuse to run without one. That passphrase is the human's approval
-for using admin keys. Never try to work around it:
+Commands that read a factory's 1Password item need the operator's **provision passphrase**, typed
+on the terminal. That passphrase is the human's approval for using admin keys.
 
-- do not run those commands yourself, pipe input into them, or wrap them in `script`/`expect`;
-- do not set `OP_SERVICE_ACCOUNT_TOKEN`, run `op`, or read `~/.config/provision/*.cred`;
-- do not ask the human for the passphrase or any token.
+When you run one of them, `provision` detects the agent, changes nothing, and exits **4** with one
+JSON object on stderr:
 
-Instead, write the exact command for the human, say what it will do, and wait for them to paste
-the output. If `provision` is installed root-owned at `/usr/local/bin/provision`, give the absolute
-path: a `provision` earlier on `PATH` could be a different binary.
+```json
+{
+  "status": "approval_required",
+  "reason": "…",
+  "hint": "…",
+  "next": [
+    "cd /home/acme/src/acme-app && /usr/local/bin/provision factory --domain app.acme.com --dry-run"
+  ]
+}
+```
+
+Give the human the `next` command verbatim, say in one or two sentences what it will do, and wait
+for them to paste the output. You may also skip the attempt and write the command yourself; use
+`/usr/local/bin/provision` when it exists, since a `provision` earlier on `PATH` could be a
+different binary.
+
+Agents are also detected for `provision env`, which then never prompts (as with
+`--non-interactive`).
 
 ## Make a checkout or worktree runnable
 
@@ -104,7 +117,22 @@ credentials into Vercel). Relay `manual:` lines to the human.
 explicit request), `abort`. Data (databases, buckets, teams) is never deleted or replaced.
 `--only <steps>` reruns a subset, e.g. `--only reports` after the factory gains a report receiver.
 
+## Never
+
+- Run a passphrase command in a way that gets around the approval: piping input, `script`,
+  `expect`, `tmux send-keys`, a pseudo-terminal, or unsetting agent variables such as `AI_AGENT`.
+- Ask the human for the passphrase, a 1Password token, or an admin key; set
+  `OP_SERVICE_ACCOUNT_TOKEN`; run `op`; or read `~/.config/provision/*.cred`.
+- Print `.env*` files, connection strings, or keys, or copy them into chat, commits, or logs.
+- Pass `--on-existing overwrite` unless the human asked to rotate: it invalidates sessions and
+  encrypted data.
+- Delete provider resources (Neon projects, R2 buckets, Upstash teams, Vercel projects) to "start
+  over"; `provision` reuses what exists.
+- Delete a worktree before `provision db release` for both leases.
+- Edit `~/.config/provision/` or the lease files under `~/.local/state/pi/sandbox-db/` by hand.
+
 ## Exit codes
 
 `0` success; `1` negative result (for example no lease) or usage error; `2` failure, explained in
-one `provision <mode>: …` line on stderr; `3` `env` needs a Vercel link.
+one `provision <mode>: …` line on stderr; `3` `env` needs a Vercel link (JSON on stderr); `4` a
+human must run this command (JSON with `next` on stderr).

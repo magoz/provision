@@ -319,6 +319,21 @@ describe('provision factory', () => {
     })
   )
 
+  it.live('hands the command to the human when an agent runs it', () =>
+    Effect.gen(function* () {
+      const { world, invocations, run } = yield* setup()
+
+      process.env['AI_AGENT'] = 'acme-agent'
+      yield* run('--dry-run').pipe(
+        Effect.ensuring(Effect.sync(() => delete process.env['AI_AGENT']))
+      )
+
+      expect(process.exitCode).toBe(4)
+      expect(invocations).toEqual([])
+      expect(world.mutations).toEqual([])
+    })
+  )
+
   it.live('mutates nothing in a dry run', () =>
     Effect.gen(function* () {
       const { world, run } = yield* setup()
