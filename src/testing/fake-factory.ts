@@ -408,10 +408,6 @@ const upstash = (world: FakeWorld, method: string, path: string, body: unknown) 
     return json(team)
   }
 
-  if (path === '/v2/qstash/users') {
-    return json([{ region: 'eu-central-1', token: 'qstash-token', active: true }])
-  }
-
   return notFound()
 }
 
@@ -456,11 +452,9 @@ export const fakeProvidersLayer = (world: FakeWorld) =>
                 ? resend(world, method, url.pathname, body)
                 : url.host === 'api.upstash.com'
                   ? upstash(world, method, url.pathname, body)
-                  : url.host === 'qstash-eu-central-1.upstash.io'
-                    ? json({ current: 'sig-current', next: 'sig-next' })
-                    : url.host === 'receiver.example.test'
-                      ? receiver(world, method, url.pathname, body)
-                      : notFound()
+                  : url.host === 'receiver.example.test'
+                    ? receiver(world, method, url.pathname, body)
+                    : notFound()
 
         return HttpClientResponse.fromWeb(request, response)
       })

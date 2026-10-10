@@ -122,9 +122,6 @@ export interface FactoryCredentials {
     | {
         readonly email: string
         readonly apiKey: Redacted.Redacted<string>
-        /** Team-scoped keys that can read each team's QStash credentials (optional). */
-        readonly developmentApiKey: Redacted.Redacted<string> | undefined
-        readonly productionApiKey: Redacted.Redacted<string> | undefined
       }
     | undefined
   readonly resend:
@@ -224,15 +221,7 @@ export const decodeCredentials = (fields: ItemFields) =>
         cloudflareToken && cloudflareAccount
           ? { apiToken: cloudflareToken, accountId: cloudflareAccount }
           : undefined,
-      upstash:
-        upstashEmail && upstashKey
-          ? {
-              email: upstashEmail,
-              apiKey: upstashKey,
-              developmentApiKey: field('upstash.dev_api_key'),
-              productionApiKey: field('upstash.prod_api_key')
-            }
-          : undefined,
+      upstash: upstashEmail && upstashKey ? { email: upstashEmail, apiKey: upstashKey } : undefined,
       resend: resendKey ? { apiKey: resendKey, sendingDomain } : undefined,
       reportReceiver:
         receiverUrl && receiverKey ? { url: receiverUrl, factoryKey: receiverKey } : undefined

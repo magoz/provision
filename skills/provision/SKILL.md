@@ -96,8 +96,8 @@ provision env --repo <checkout> --database
 
 Reading the output: each step prints one block. `would …` is a dry-run plan, `exists:` /
 `reusing …` means nothing changed, `skipped:` means the factory lacks that provider, and
-`manual: …` is a follow-up the human must do by hand (for example copying QStash keys into Vercel
-when the factory has no team-scoped Upstash keys). Relay `manual:` lines to the human.
+`manual: …` is a follow-up the human must do by hand (for example copying each Upstash team's QStash
+credentials into Vercel). Relay `manual:` lines to the human.
 
 `--on-existing`: `ask` (default, prompts), `reuse` (change nothing that exists), `overwrite`
 (rotate keys and regenerate secrets: invalidates sessions and encrypted data; only on the human's

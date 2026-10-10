@@ -24,8 +24,6 @@ const itemFields: Record<string, string> = {
   'cloudflare.account_id': 'cf-account',
   'upstash.email': 'ops@acme.test',
   'upstash.api_key': 'upstash-admin',
-  'upstash.dev_api_key': 'upstash-dev',
-  'upstash.prod_api_key': 'upstash-prod',
   'resend.api_key': 'resend-admin',
   'resend.sending_domain': 'mail.example.test',
   'report_receiver.url': 'https://receiver.example.test/api/reports',
@@ -169,7 +167,7 @@ describe('provision factory', () => {
         'acme-app-dev',
         'acme-app-prod'
       ])
-      expect(recordFor(world, 'QSTASH_TOKEN', 'production')[0]?.type).toBe('sensitive')
+      expect(records(world).filter(record => record.key.startsWith('QSTASH_'))).toEqual([])
       expect(world.resend.keys.map(key => key.name)).toEqual(['acme-app-dev', 'acme-app-prod'])
       expect(world.resend.created).toEqual([
         { name: 'acme-app-dev', permission: 'sending_access' },

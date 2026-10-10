@@ -158,15 +158,15 @@ factory       acme
 Fields are `section.label` in the item. A section counts only when all of its required fields are
 filled; `github` and `vercel` are required, the others enable the steps that use them.
 
-| Section           | Fields                                                     | Used by                   |
-| ----------------- | ---------------------------------------------------------- | ------------------------- |
-| `github`          | `owner`                                                    | factory selection, checks |
-| `vercel`          | `team_id` (`team_…`)                                       | every step                |
-| `neon`            | `api_key`, `org_id`                                        | `neon`                    |
-| `cloudflare`      | `api_token`, `account_id`                                  | `r2`                      |
-| `upstash`         | `email`, `api_key`; optional `dev_api_key`, `prod_api_key` | `upstash`                 |
-| `resend`          | `api_key`; optional `sending_domain`                       | `resend`, `secrets`       |
-| `report_receiver` | `url`, `factory_key`                                       | `reports`                 |
+| Section           | Fields                               | Used by                   |
+| ----------------- | ------------------------------------ | ------------------------- |
+| `github`          | `owner`                              | factory selection, checks |
+| `vercel`          | `team_id` (`team_…`)                 | every step                |
+| `neon`            | `api_key`, `org_id`                  | `neon`                    |
+| `cloudflare`      | `api_token`, `account_id`            | `r2`                      |
+| `upstash`         | `email`, `api_key`                   | `upstash`                 |
+| `resend`          | `api_key`; optional `sending_domain` | `resend`, `secrets`       |
+| `report_receiver` | `url`, `factory_key`                 | `reports`                 |
 
 Where to get each value:
 
@@ -186,9 +186,7 @@ Where to get each value:
   "Account API Tokens Edit" can mint tokens with any permission you hold on the account: treat
   this token as account-level access.
 - **`upstash.email`, `upstash.api_key`**: your Upstash account email and a Management API key
-  (Upstash Console → Account → Management API). `dev_api_key`/`prod_api_key` are experimental
-  team-scoped keys used to read QStash credentials; leave them empty and copy QStash credentials by
-  hand (see [Manual follow-ups](#manual-follow-ups)).
+  (Upstash Console → Account → Management API).
 - **`resend.api_key`**: a **Full access** Resend API key (it creates the per-project sending keys).
   `sending_domain` is optional: when set, `AUTH_EMAIL_FROM` defaults to `noreply@<sending_domain>`.
 - **`report_receiver.url`, `report_receiver.factory_key`**: an optional service that issues
@@ -297,10 +295,11 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
 
 ### Manual follow-ups
 
-- **QStash.** Without team-scoped Upstash keys, the `upstash` step creates the teams and prints
-  `manual:` lines. In the Upstash console, open team `<repo>-dev`, go to QStash (EU region), and copy
-  `QSTASH_URL`, `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, and `QSTASH_NEXT_SIGNING_KEY` into the
-  Vercel project for Development, Preview, and `test`. Then copy team `<repo>-prod`'s values into
+- **QStash.** The `upstash` step creates the teams, but a team's QStash credentials can only be
+  read from inside that team, so it prints `manual:` lines instead. In the Upstash console, open
+  team `<repo>-dev`, go to QStash (EU region), and copy `QSTASH_URL`, `QSTASH_TOKEN`,
+  `QSTASH_CURRENT_SIGNING_KEY`, and `QSTASH_NEXT_SIGNING_KEY` into the Vercel project for
+  Development, Preview, and `test`. Then copy team `<repo>-prod`'s values into
   Production, marked Sensitive. Later runs stop printing the reminder once Vercel has them.
 - **DNS.** If the domain is not yet pointed at Vercel, add the record shown under the project's
   Domains settings at your DNS provider.

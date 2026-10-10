@@ -1,4 +1,4 @@
-import { Console, Effect, Option, Redacted } from 'effect'
+import { Console, Effect, Option } from 'effect'
 import {
   decide,
   envGroups,
@@ -6,11 +6,9 @@ import {
   groupHasKeys,
   mutate,
   requireProject,
-  writeGroup,
-  type EnvGroup,
   type FactoryContext
 } from '../context.ts'
-import { createTeam, findTeam, qstashUrl, readQStash } from '../providers/upstash.ts'
+import { createTeam, findTeam } from '../providers/upstash.ts'
 import { listEnvRecords } from '../vercel-api.ts'
 
 export const qstashVariableKeys = [
@@ -22,9 +20,9 @@ export const qstashVariableKeys = [
 
 /**
  * Retained `<repo>-dev` and `<repo>-prod` teams (QStash has one tenancy per team, so separate
- * teams are the only isolation boundary). When the factory item holds team-scoped keys
- * (`upstash.dev_api_key`, `upstash.prod_api_key`), each team's EU QStash credentials are written
- * to Vercel; otherwise the manual transfer is reported.
+ * teams are the only isolation boundary). A team's QStash credentials are only readable with a key
+ * created inside that team, so copying them into Vercel stays manual; the step reports it until
+ * Vercel has them.
  */
 export const upstashStep = (context: FactoryContext) =>
   Effect.gen(function* () {
@@ -45,67 +43,31 @@ export const upstashStep = (context: FactoryContext) =>
     }
 
     const handle = yield* requireProject(context)
+    const records = Option.isSome(handle)
+      ? yield* listEnvRecords(context.credentials.vercel.teamId, handle.value.project.id)
+      : []
+    const targets = Option.match(handle, {
+      onNone: () => [
+        { team: context.names.development, label: 'Development, Preview, test', done: false },
+        { team: context.names.production, label: 'Production', done: false }
+      ],
+      onSome: project => {
+        const groups = envGroups(project)
 
-    if (Option.isNone(handle)) {
+        return [
+          { team: context.names.development, group: groups.preproduction },
+          { team: context.names.production, group: groups.production }
+        ].map(({ team, group }) => ({
+          team,
+          label: group.label,
+          done: groupHasKeys(records, group, qstashVariableKeys)
+        }))
+      }
+    })
+
+    for (const pending of targets.filter(target => !target.done)) {
       yield* Console.log(
-        '  would write QStash credentials after the vercel step creates the project'
+        `  manual: copy ${pending.team}'s EU QStash ${qstashVariableKeys.join(', ')} into Vercel (${pending.label})`
       )
-
-      return
-    }
-
-    const groups = envGroups(handle.value)
-    const records = yield* listEnvRecords(
-      context.credentials.vercel.teamId,
-      handle.value.project.id
-    )
-
-    const targets: ReadonlyArray<{
-      readonly team: string
-      readonly key: Redacted.Redacted<string> | undefined
-      readonly group: EnvGroup
-      readonly secretType: 'encrypted' | 'sensitive'
-    }> = [
-      {
-        team: context.names.development,
-        key: upstash.developmentApiKey,
-        group: groups.preproduction,
-        secretType: 'encrypted'
-      },
-      {
-        team: context.names.production,
-        key: upstash.productionApiKey,
-        group: groups.production,
-        secretType: 'sensitive'
-      }
-    ]
-
-    for (const target of targets) {
-      if (groupHasKeys(records, target.group, qstashVariableKeys)) {
-        const decision = yield* decide(context, 'key', `QStash records for ${target.group.label}`)
-
-        if (decision === 'reuse') continue
-      }
-
-      if (target.key === undefined) {
-        yield* Console.log(
-          `  manual: copy ${target.team}'s EU QStash ${qstashVariableKeys.join(', ')} into Vercel (${target.group.label}), or add a team-scoped key to the factory item`
-        )
-        continue
-      }
-
-      const teamKey = target.key
-      const [url, token, current, next] = qstashVariableKeys
-
-      yield* Effect.gen(function* () {
-        const qstash = yield* readQStash(upstash.email, teamKey)
-
-        yield* writeGroup(context, handle.value, target.group, [
-          { key: url, value: Redacted.make(qstashUrl), type: 'encrypted' },
-          { key: token, value: qstash.token, type: target.secretType },
-          { key: current, value: qstash.currentSigningKey, type: target.secretType },
-          { key: next, value: qstash.nextSigningKey, type: target.secretType }
-        ])
-      })
     }
   })
