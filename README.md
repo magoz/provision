@@ -358,6 +358,15 @@ setup failure keeps them, since they are valid; fix the cause and rerun to resum
 ambiguous Vercel link prints `{"status":"vercel_link_required","directory":…,"reason":…}` on stderr
 and exits 3; rerun with `--source` or `--vercel-project`.
 
+**Adding a variable.** Vercel is the source of truth: each run rewrites the env files from it, so
+add new variables to the Vercel project and pull again rather than editing `.env.local`:
+
+```bash
+vercel env add AI_GATEWAY_API_KEY development      # prompts for the value
+vercel env add SOME_FLAG test --value on --yes     # the custom e2e environment
+provision env --skip-install --skip-setup          # refresh .env.local and .env.test
+```
+
 ## `provision db`
 
 Disposable Neon branches for local checkouts, cloned from the sandbox parent branch (by default

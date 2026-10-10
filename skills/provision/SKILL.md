@@ -67,6 +67,36 @@ env files keep whatever database Vercel provides; prefer `--database` for anythi
 - Never print `.env*` files or connection strings; they hold secrets. Check for a key with
   `grep -c '^KEY=' .env.local` instead of reading values.
 
+## Add or change an environment variable
+
+Vercel is the source of truth. `provision env` rewrites `.env.local` and `.env.test` from Vercel on
+every run, so a value added only to a local file is lost. Add it to the Vercel project, then pull:
+
+```bash
+cd <checkout>   # linked to the project (.vercel/project.json)
+vercel env add <KEY> development               # local development only
+vercel env add <KEY> preview                   # repeat per environment as needed
+vercel env add <KEY> test                      # the custom e2e environment (.env.test)
+vercel env add <KEY> production --sensitive    # production secrets are Sensitive
+provision env --repo <checkout> --skip-install --skip-setup   # refresh the env files
+```
+
+Follow the project's convention: pre-production values (Development, Preview, `test`) and
+production values are separate, and production secrets are Sensitive. Development cannot hold
+Sensitive values.
+
+- **Secrets** (API keys, tokens): don't handle the value. Give the human the `vercel env add`
+  command; it prompts for the value. Never pass a secret with `--value` or put it in a file,
+  commit, or the chat.
+- **Non-secret config** (URLs, feature flags, thresholds): you may run
+  `vercel env add <KEY> <environment> --value <value> --yes` yourself.
+- **Variables `provision factory` manages** (`DATABASE_URL*`, `SANDBOX_DB_*`, `R2_*`, `QSTASH_*`,
+  `RESEND_API_KEY`, `REPORT_RECEIVER_*`, `BETTER_AUTH_SECRET`, `INTEGRATION_CREDENTIAL_ENCRYPTION_KEY`,
+  `CRON_SECRET`, `VAPID_*`, `AUTH_EMAIL_FROM`, `AI_PROVIDER_USAGE_ALERT_THRESHOLDS`,
+  `ALLOW_E2E_DATABASE_RESET`): don't edit them by hand. Have the human rerun the step, e.g.
+  `--only resend --on-existing overwrite` to rotate a key.
+- Deployments only see variables added before they were built; redeploy to pick up a change.
+
 ## Disposable databases
 
 ```bash
