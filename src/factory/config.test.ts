@@ -148,7 +148,12 @@ const fakeOnePassword = (initial: Initial) => {
     }
 
     if (noun === 'item' && verb === 'get') {
-      return state.item === undefined ? { exitCode: 1 } : { stdout: opItem(state.item) }
+      return state.item === undefined
+        ? {
+            exitCode: 1,
+            stderr: `[ERROR] 2026/10/10 07:30:00 "provision" isn't an item in the "provision-acme" vault.\n`
+          }
+        : { stdout: opItem(state.item) }
     }
 
     return { exitCode: 1 }
@@ -204,7 +209,7 @@ describe('provision config add', () => {
 
       yield* run(...add)
 
-      expect(process.exitCode).toBe(2)
+      expect(process.exitCode).toBe(1)
       expect(yield* registry).toBeUndefined()
       expect(onePassword.state.vault).toBe(true)
       expect(Object.keys(onePassword.state.item ?? {})).toContain('neon.api_key')
@@ -347,7 +352,7 @@ describe('provision config add', () => {
       expect(Object.keys(onePassword.state.item ?? {})).toContain('github.owner')
       expect(onePassword.state.serviceAccounts).toBe(1)
       // The recreated item is empty, so registration waits for the operator.
-      expect(process.exitCode).toBe(2)
+      expect(process.exitCode).toBe(1)
     })
   )
 

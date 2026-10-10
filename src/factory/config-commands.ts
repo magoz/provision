@@ -57,12 +57,21 @@ const valueOrPrompt = (value: Option.Option<string>, message: string, fallback?:
         ? Effect.fail(new RegistryError({ message: `${message}: pass it as a flag` }))
         : Effect.succeed(fallback)
 
+const requiredSections = new Set(['github', 'vercel'])
+
+/** One line per section: status plus the fields still to fill. */
 const sectionTable = (sections: ReturnType<typeof describeSections>) =>
   sections
-    .map(
-      section =>
-        `  ${section.section.padEnd(16)} ${section.status}${section.status === 'partial' ? ` (missing ${section.missing.join(', ')})` : ''}`
-    )
+    .map(section => {
+      const status =
+        section.status === 'complete'
+          ? '✓ complete'
+          : section.status === 'partial'
+            ? `partial: also fill ${section.missing.join(', ')}`
+            : `empty: ${section.missing.join(', ')}${requiredSections.has(section.section) ? ' (required)' : ''}`
+
+      return `  ${section.section.padEnd(16)} ${status}`
+    })
     .join('\n')
 
 /** Whether `op` already has a service-account credential for this factory. */
@@ -144,16 +153,21 @@ const add = Command.make(
 
         const auth = yield* resolveOpAuth(name)
         const first = yield* Effect.result(readItemJson(location, auth))
+
+        if (Result.isFailure(first) && first.failure.notFound !== true) {
+          return yield* first.failure
+        }
+
         const problem = Result.isFailure(first)
-          ? `cannot read item ${item} (${first.failure.message})`
+          ? `Item ${item} does not exist in ${vault} yet; signing in to 1Password to create it.`
           : missingTemplateFields(first.success).length > 0
-            ? `item ${item} lacks ${missingTemplateFields(first.success).length} field(s)`
+            ? `Item ${item} is missing ${missingTemplateFields(first.success).length} field(s); signing in to 1Password to add them.`
             : undefined
 
         // A missing or hand-made item: create it, or add the missing fields (empty), with the
         // operator's sign-in. Existing values are never touched.
         if (problem !== undefined) {
-          yield* Console.log(`${problem}; signing in to 1Password to fix it`)
+          yield* Console.log(problem)
           yield* ensureFactoryItem(vault, item, { assumeYes: options.yes })
         }
 
@@ -167,13 +181,19 @@ const add = Command.make(
         const credentials = yield* Effect.result(decodeCredentials(fields))
 
         if (Result.isFailure(credentials)) {
-          yield* Console.log(sectionTable(sections))
+          yield* Console.log(
+            [
+              '',
+              `Next: fill in item ${item} in vault ${vault} (1Password app or web).`,
+              'github and vercel are required; fill the other sections for the providers this factory uses.',
+              '',
+              sectionTable(sections),
+              '',
+              `Then run: provision config add --name ${name}${vault === `provision-${name}` ? '' : ` --vault ${vault}`}`
+            ].join('\n')
+          )
 
-          return yield* new RegistryError({
-            message:
-              `fill in the missing fields of item ${item} in vault ${vault} (1Password app or web), ` +
-              `then run: provision config add --name ${name} --vault ${vault}`
-          })
+          return yield* setExitCode(1)
         }
 
         const registry = yield* readRegistry

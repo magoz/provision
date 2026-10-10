@@ -5,6 +5,8 @@ import type { FactoryEntry } from './registry.ts'
 
 export class CredentialsError extends Data.TaggedError('CredentialsError')<{
   readonly message: string
+  /** The item does not exist in the vault (as opposed to any other read failure). */
+  readonly notFound?: boolean
 }> {}
 
 const OpField = Schema.Struct({
@@ -59,6 +61,13 @@ export const readItemJson = (entry: FactoryEntry, auth: OpAuthSource) =>
 
     if (result.exitCode !== 0) {
       const reason = opErrorMessage(result.stderr)
+
+      if (reason?.includes("isn't an item") === true) {
+        return yield* new CredentialsError({
+          message: `item ${entry.item} does not exist in vault ${entry.vault}`,
+          notFound: true
+        })
+      }
 
       return yield* new CredentialsError({
         message:
