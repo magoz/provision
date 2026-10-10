@@ -109,8 +109,12 @@ provision env --repo <checkout> --database
 
 Reading the output: each step prints one block. `would …` is a dry-run plan, `exists:` /
 `reusing …` means nothing changed, `skipped:` means the factory lacks that provider, and
-`manual: …` is a follow-up the human must do by hand (for example copying each Upstash team's QStash
-credentials into Vercel). Relay `manual:` lines to the human.
+`manual: …` is a follow-up the human must do by hand. Relay `manual:` lines to the human.
+
+QStash credentials are pasted by the human when `provision factory` asks for them (hidden input,
+written straight to Vercel). If they skipped it, give them
+`/usr/local/bin/provision factory --checkout <checkout> --domain <host> --only upstash --on-existing reuse`.
+Never ask the human to paste QStash values, or any other credential, into the chat.
 
 `--on-existing`: `ask` (default, prompts), `reuse` (change nothing that exists), `overwrite`
 (rotate keys and regenerate secrets: invalidates sessions and encrypted data; only on the human's

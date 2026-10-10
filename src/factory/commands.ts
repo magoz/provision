@@ -8,6 +8,7 @@ import { humanOnly } from './approval.ts'
 import {
   factoryError,
   onExistingPolicies,
+  withTerminal,
   type FactoryContext,
   type OnExisting
 } from './context.ts'
@@ -51,7 +52,8 @@ const runStep = (step: FactoryStep, context: FactoryContext) =>
     yield* steps[step](context).pipe(
       Effect.provideService(Console.Console, buffered),
       Effect.tapError(error => Effect.sync(() => lines.push(`  failed: ${error.message}`))),
-      Effect.ensuring(Effect.suspend(() => Console.log(lines.join('\n'))))
+      // Waits while another step is prompting, so output never lands in the middle of a prompt.
+      Effect.ensuring(Effect.suspend(() => withTerminal(Console.log(lines.join('\n')))))
     )
   })
 

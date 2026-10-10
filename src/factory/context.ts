@@ -62,8 +62,11 @@ export const factoryError = (message: string) => new FactoryError({ message })
 
 const interactive = () => process.stdin.isTTY === true && process.stdout.isTTY === true
 
-/** Concurrent steps share one terminal: one prompt at a time. */
+/** Concurrent steps share one terminal: one prompt (or group of prompts) at a time. */
 const promptLock = Semaphore.makeUnsafe(1)
+
+export const withTerminal = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  promptLock.withPermits(1)(effect)
 
 /** Decides what to do with an existing resource: `reuse` or `overwrite` (abort fails). */
 export const decide = (context: FactoryContext, kind: ResourceKind, description: string) =>
@@ -114,7 +117,7 @@ export const decide = (context: FactoryContext, kind: ResourceKind, description:
       })
     ).pipe(
       Effect.mapError(() => factoryError('cancelled')),
-      promptLock.withPermits(1)
+      withTerminal
     )
 
     if (choice === 'abort') return yield* factoryError(`aborted at ${description}`)

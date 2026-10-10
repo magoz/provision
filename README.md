@@ -227,16 +227,16 @@ Creates what the repository declares (`provision.factory.steps`, narrowed by `--
 checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Vercel project),
 `<repo>-dev` (pre-production), and `<repo>-prod` (production).
 
-| Step      | Creates                                                                                            | Vercel env vars                                                      |
-| --------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link            | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                           |
-| `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production) |
-| `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                        | `R2_*`                                                               |
-| `upstash` | `<repo>-dev`/`-prod` teams                                                                         | `QSTASH_*` (see [Manual follow-ups](#manual-follow-ups))             |
-| `resend`  | sending-only keys (any verified domain)                                                            | `RESEND_API_KEY`                                                     |
-| `reports` | report tokens from the factory's receiver                                                          | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                       |
-| `secrets` | generated `BETTER_AUTH_SECRET`, `INTEGRATION_CREDENTIAL_ENCRYPTION_KEY`, `CRON_SECRET`, VAPID pair | those, plus `AUTH_EMAIL_FROM`, `AI_PROVIDER_USAGE_ALERT_THRESHOLDS`  |
-| `domain`  | attaches `--domain` to the project                                                                 | —                                                                    |
+| Step      | Creates                                                                                            | Vercel env vars                                                         |
+| --------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link            | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                              |
+| `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production)    |
+| `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                        | `R2_*`                                                                  |
+| `upstash` | `<repo>-dev`/`-prod` teams                                                                         | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups)) |
+| `resend`  | sending-only keys (any verified domain)                                                            | `RESEND_API_KEY`                                                        |
+| `reports` | report tokens from the factory's receiver                                                          | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                          |
+| `secrets` | generated `BETTER_AUTH_SECRET`, `INTEGRATION_CREDENTIAL_ENCRYPTION_KEY`, `CRON_SECRET`, VAPID pair | those, plus `AUTH_EMAIL_FROM`, `AI_PROVIDER_USAGE_ALERT_THRESHOLDS`     |
+| `domain`  | attaches `--domain` to the project                                                                 | —                                                                       |
 
 - **Environments.** Pre-production values go to Development, Preview, and `test`; production values
   go to Production and are Sensitive. Each side gets its own keys and secrets.
@@ -295,12 +295,28 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
 
 ### Manual follow-ups
 
-- **QStash.** The `upstash` step creates the teams, but a team's QStash credentials can only be
-  read from inside that team, so it prints `manual:` lines instead. In the Upstash console, open
-  team `<repo>-dev`, go to QStash (EU region), and copy `QSTASH_URL`, `QSTASH_TOKEN`,
-  `QSTASH_CURRENT_SIGNING_KEY`, and `QSTASH_NEXT_SIGNING_KEY` into the Vercel project for
-  Development, Preview, and `test`. Then copy team `<repo>-prod`'s values into
-  Production, marked Sensitive. Later runs stop printing the reminder once Vercel has them.
+- **QStash.** A team's QStash credentials can only be read from inside that team, so the
+  `upstash` step creates the teams and then asks you to paste each team's `QSTASH_URL`,
+  `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, and `QSTASH_NEXT_SIGNING_KEY` (hidden input) from
+  the [Upstash console](https://console.upstash.com/qstash): switch to the team, choose the EU
+  region, copy each value. It writes them to Vercel like every other key: `<repo>-dev` to
+  Development, Preview, and `test`; `<repo>-prod` to Production, Sensitive. Press Enter on an
+  empty value to skip; without a terminal, or when skipped, it prints a `manual:` line instead.
+  Runs ask only while Vercel is missing them:
+
+  ```bash
+  provision factory --checkout ~/src/acme-app --domain app.acme.com --only upstash --on-existing reuse
+  ```
+
+  ```text
+  QStash for acme-app-dev → Vercel (Development, Preview, test)
+    1. Open https://console.upstash.com/qstash and switch to team acme-app-dev
+       (team menu, top left).
+    2. Choose the EU region (eu-central-1) and copy each value below.
+    Press Enter on an empty value to skip and copy them into Vercel later.
+  QSTASH_URL:
+  ```
+
 - **DNS.** If the domain is not yet pointed at Vercel, add the record shown under the project's
   Domains settings at your DNS provider.
 
