@@ -14,6 +14,7 @@ src/shared/         modules used by more than one mode (repo config, …)
 src/factory/        factory mode (admin credentials live only here)
 src/env/            env mode
 src/db/             db mode
+skills/provision/   agent skill shipped with the package (`npx skills add magoz/provision`)
 ```
 
 ## Conventions
@@ -36,7 +37,8 @@ src/db/             db mode
 
 `provision contract`, every `--json` output, and exit codes are a public interface used by other
 tools (for example `worktree`). Changing them requires updating the snapshot tests and README,
-and a breaking change requires bumping `contractVersion` and a major version.
+and a breaking change requires bumping `contractVersion` and a major version. Keep the README and
+`skills/provision/SKILL.md` in sync with commands, flags, and output.
 
 ## Tests
 
