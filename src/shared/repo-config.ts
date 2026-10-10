@@ -76,6 +76,13 @@ const decodeProvision = Schema.decodeUnknownEffect(ProvisionInput, {
   errors: 'all'
 })
 
+const decodeLegacy = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    appDir: Schema.optionalKey(Schema.UndefinedOr(Schema.NonEmptyString)),
+    setup: Schema.optionalKey(Schema.UndefinedOr(Schema.Array(SetupCommand)))
+  })
+)
+
 const configError = (message: string) => new RepoConfigError({ message })
 
 export const normalizeAppDir = (appDir: string): string | undefined => {
@@ -98,25 +105,25 @@ export const parseRepoConfig = (packageJsonText: string) =>
       Effect.mapError(cause => configError(`invalid package.json: ${cause.message}`))
     )
 
-    if (packageJson.provisionEnv !== undefined) {
-      return yield* configError(
-        'package.json "provisionEnv" is no longer read; move "provisionEnv.appDir" to "provision.appDir"'
+    // Transition: legacy keys still used by the `worktree` CLI are read as fallbacks.
+    const legacy = yield* decodeLegacy({
+      appDir: Predicate.hasProperty(packageJson.provisionEnv, 'appDir')
+        ? packageJson.provisionEnv.appDir
+        : undefined,
+      setup: Predicate.hasProperty(packageJson.worktree, 'setup')
+        ? packageJson.worktree.setup
+        : undefined
+    }).pipe(
+      Effect.mapError(cause =>
+        configError(`invalid package.json "provisionEnv"/"worktree.setup": ${cause.message}`)
       )
-    }
+    )
 
-    if (Predicate.hasProperty(packageJson.worktree, 'setup')) {
-      return yield* configError(
-        'package.json "worktree.setup" is no longer read; move it to "provision.setup"'
-      )
-    }
-
-    if (packageJson.provision === undefined) return defaultRepoConfig
-
-    const input = yield* decodeProvision(packageJson.provision).pipe(
+    const input = yield* decodeProvision(packageJson.provision ?? {}).pipe(
       Effect.mapError(cause => configError(`invalid package.json "provision": ${cause.message}`))
     )
 
-    const appDir = normalizeAppDir(input.appDir ?? '.')
+    const appDir = normalizeAppDir(input.appDir ?? legacy.appDir ?? '.')
 
     if (appDir === undefined) {
       return yield* configError(
@@ -128,7 +135,7 @@ export const parseRepoConfig = (packageJsonText: string) =>
 
     return {
       appDir,
-      setup: input.setup ?? [],
+      setup: input.setup ?? legacy.setup ?? [],
       factory: {
         steps:
           selected === undefined

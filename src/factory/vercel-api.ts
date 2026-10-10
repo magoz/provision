@@ -202,7 +202,7 @@ export const listEnvRecords = (teamId: string, projectId: string) =>
     let until: string | undefined
 
     do {
-      const query = new URLSearchParams({ decrypt: 'false', limit: '100' })
+      const query = new URLSearchParams({ limit: '100' })
 
       if (until !== undefined) query.set('until', until)
 
