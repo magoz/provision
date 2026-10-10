@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Option, Redacted } from 'effect'
+import { Effect, Layer, Option } from 'effect'
 import { Command } from 'effect/cli'
 import {
   factoryScript,
@@ -14,7 +14,7 @@ import { scriptedProcessLayer, type Invocation } from '../testing/scripted-proce
 import { passphraseLayer, temporaryDirectory } from '../testing/temporary.ts'
 import { factoryCommand, selectSteps } from './commands.ts'
 import { RegistryLocation } from './registry.ts'
-import { SecretInput } from './secret-input.ts'
+import { parseEnvBlock, SecretInput } from './secret-input.ts'
 
 const itemFields: Record<string, string> = {
   'github.owner': 'acme',
@@ -85,12 +85,12 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
       fakeProvidersLayer(world),
       passphraseLayer(),
       Layer.succeed(SecretInput, {
-        read: message =>
+        readEnv: (message, keys) =>
           Effect.sync(() => {
             prompts.push(message)
-            const answer = answers.shift()
+            const values = parseEnvBlock(answers.shift()?.split('\n') ?? [], keys)
 
-            return answer === undefined ? Option.none() : Option.some(Redacted.make(answer))
+            return values.size === 0 ? Option.none() : Option.some(values)
           })
       }),
       Layer.succeed(RegistryLocation, { file: registry })
@@ -112,6 +112,15 @@ const records = (world: FakeWorld) => [...world.vercel.envs.values()].flat()
 
 const recordFor = (world: FakeWorld, key: string, target: string) =>
   records(world).filter(record => record.key === key && record.target.includes(target))
+
+/** The `.env` block QStash's console Quickstart offers to copy. */
+const qstashBlock = (url: string, token: string) =>
+  [
+    `QSTASH_URL="${url}"`,
+    `QSTASH_TOKEN="${token}"`,
+    `QSTASH_CURRENT_SIGNING_KEY="sig_${token}_current"`,
+    `export QSTASH_NEXT_SIGNING_KEY='sig_${token}_next'`
+  ].join('\n')
 
 afterEach(() => {
   process.exitCode = undefined
@@ -347,45 +356,45 @@ describe('provision factory', () => {
     })
   )
 
-  it.live(
-    'writes QStash credentials the operator pastes, and asks only while they are missing',
-    () =>
-      Effect.gen(function* () {
-        const { world, run, answers, prompts } = yield* setup()
-        yield* run('--on-existing', 'abort', '--only', 'vercel')
+  it.live('writes the pasted QStash .env block, asking only while it is missing', () =>
+    Effect.gen(function* () {
+      const { world, run, answers, prompts } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
 
-        answers.push(
-          'http://not-https.test',
-          'https://qstash-eu-central-1.upstash.io',
-          'dev-token',
-          'sig_dev_current',
-          'sig_dev_next'
-        )
-        yield* run('--only', 'upstash', '--on-existing', 'reuse')
+      answers.push(
+        'QSTASH_TOKEN="dev-token"',
+        qstashBlock('http://not-https.test', 'dev-token'),
+        qstashBlock('https://qstash-eu-central-1.upstash.io', 'dev-token')
+      )
+      yield* run('--only', 'upstash', '--on-existing', 'reuse')
 
-        expect(process.exitCode).toBeUndefined()
-        expect(prompts.filter(prompt => prompt.includes('must be an https URL'))).toHaveLength(1)
-        expect(recordFor(world, 'QSTASH_TOKEN', 'preview')[0]).toMatchObject({
-          value: 'dev-token',
-          type: 'encrypted'
-        })
-        expect(recordFor(world, 'QSTASH_TOKEN', 'production')).toEqual([])
-
-        answers.push('https://qstash-eu-central-1.upstash.io', 'prod-token', 'sig_cur', 'sig_next')
-        const before = prompts.length
-        yield* run('--only', 'upstash', '--on-existing', 'reuse')
-
-        expect(prompts.slice(before).every(prompt => !prompt.includes('acme-app-dev'))).toBe(true)
-        expect(recordFor(world, 'QSTASH_TOKEN', 'production')[0]).toMatchObject({
-          value: 'prod-token',
-          type: 'sensitive'
-        })
-        expect(recordFor(world, 'QSTASH_URL', 'production')[0]?.type).toBe('encrypted')
-
-        const settled = prompts.length
-        yield* run('--only', 'upstash', '--on-existing', 'reuse')
-        expect(prompts.length).toBe(settled)
+      expect(process.exitCode).toBeUndefined()
+      expect(prompts.filter(prompt => prompt.includes('Missing QSTASH_URL'))).toHaveLength(1)
+      expect(prompts.filter(prompt => prompt.includes('must be an https URL'))).toHaveLength(1)
+      expect(recordFor(world, 'QSTASH_TOKEN', 'preview')[0]).toMatchObject({
+        value: 'dev-token',
+        type: 'encrypted'
       })
+      expect(recordFor(world, 'QSTASH_NEXT_SIGNING_KEY', 'preview')[0]?.value).toBe(
+        'sig_dev-token_next'
+      )
+      expect(recordFor(world, 'QSTASH_TOKEN', 'production')).toEqual([])
+
+      answers.push(qstashBlock('https://qstash-eu-central-1.upstash.io', 'prod-token'))
+      const before = prompts.length
+      yield* run('--only', 'upstash', '--on-existing', 'reuse')
+
+      expect(prompts.slice(before).every(prompt => !prompt.includes('acme-app-dev'))).toBe(true)
+      expect(recordFor(world, 'QSTASH_TOKEN', 'production')[0]).toMatchObject({
+        value: 'prod-token',
+        type: 'sensitive'
+      })
+      expect(recordFor(world, 'QSTASH_URL', 'production')[0]?.type).toBe('encrypted')
+
+      const settled = prompts.length
+      yield* run('--only', 'upstash', '--on-existing', 'reuse')
+      expect(prompts.length).toBe(settled)
+    })
   )
 
   it.live('mutates nothing in a dry run', () =>
@@ -417,7 +426,7 @@ describe('provision factory', () => {
         scriptedProcessLayer(() => undefined, invocations),
         fakeProvidersLayer(world),
         passphraseLayer(),
-        Layer.succeed(SecretInput, { read: () => Effect.succeed(Option.none()) }),
+        Layer.succeed(SecretInput, { readEnv: () => Effect.succeed(Option.none()) }),
         Layer.succeed(RegistryLocation, { file: join(repo, 'missing.json') })
       )
 

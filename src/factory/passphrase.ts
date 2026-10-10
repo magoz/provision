@@ -32,9 +32,16 @@ const notInteractive = () =>
       'this needs your provision passphrase: run the command yourself in a terminal (agents cannot approve it)'
   })
 
-/** Reads one line from `/dev/tty` with echo off. Ctrl-C or Ctrl-D cancels. */
-export const readHiddenLine = (message: string) =>
-  Effect.callback<Redacted.Redacted<string>, PassphraseError>(resume => {
+/**
+ * Reads hidden input from `/dev/tty`, line by line, until `next` says a line ends it. Lines may
+ * arrive in one pasted chunk; CR, LF, and CRLF all end a line. Ctrl-C, or Ctrl-D on an empty
+ * line, cancels. `next` can print a confirmation (never the value) after each line.
+ */
+const readHidden = (
+  message: string,
+  next: (lines: ReadonlyArray<string>) => { readonly done: boolean; readonly note?: string }
+) =>
+  Effect.callback<ReadonlyArray<Redacted.Redacted<string>>, PassphraseError>(resume => {
     if (process.stdin.isTTY !== true && process.stdout.isTTY !== true) {
       resume(Effect.fail(notInteractive()))
 
@@ -54,7 +61,10 @@ export const readHiddenLine = (message: string) =>
     }
 
     const input = new ReadStream(readFd)
-    const characters: Array<string> = []
+    const lines: Array<string> = []
+    let characters: Array<string> = []
+    let afterCarriageReturn = false
+    let finished = false
     const write = (text: string) => {
       try {
         const buffer = Buffer.from(text)
@@ -69,6 +79,7 @@ export const readHiddenLine = (message: string) =>
     }
 
     const finish = (outcome: 'done' | 'cancelled') => {
+      finished = true
       input.removeListener('data', onData)
       input.setRawMode(false)
       input.destroy()
@@ -76,14 +87,33 @@ export const readHiddenLine = (message: string) =>
       closeSync(writeFd)
       resume(
         outcome === 'done'
-          ? Effect.succeed(Redacted.make(characters.join('')))
+          ? Effect.succeed(lines.map(line => Redacted.make(line)))
           : Effect.fail(new PassphraseError({ message: 'cancelled' }))
       )
     }
 
+    const endLine = () => {
+      lines.push(characters.join(''))
+      characters = []
+
+      const { done, note } = next(lines)
+
+      if (note !== undefined) write(`\n${note}`)
+      if (done) finish('done')
+    }
+
     const onData = (chunk: Buffer) => {
       for (const character of chunk.toString('utf8')) {
-        if (character === '\r' || character === '\n') return finish('done')
+        if (finished) return
+
+        const wasCarriageReturn = afterCarriageReturn
+        afterCarriageReturn = character === '\r'
+
+        if (character === '\n' && wasCarriageReturn) continue
+        if (character === '\r' || character === '\n') {
+          endLine()
+          continue
+        }
 
         if (character === '\u0003' || (character === '\u0004' && characters.length === 0)) {
           return finish('cancelled')
@@ -99,12 +129,39 @@ export const readHiddenLine = (message: string) =>
     input.on('data', onData)
 
     return Effect.sync(() => {
+      if (finished) return
       input.removeListener('data', onData)
       input.setRawMode(false)
       input.destroy()
       closeSync(writeFd)
     })
   })
+
+/** Reads one hidden line from `/dev/tty`. Ctrl-C or Ctrl-D cancels. */
+export const readHiddenLine = (message: string) =>
+  readHidden(message, () => ({ done: true })).pipe(
+    Effect.map(lines => lines[0] ?? Redacted.make(''))
+  )
+
+/**
+ * Reads hidden lines until an empty line or until `complete` accepts them, so a pasted block
+ * arrives in one go; `note` confirms each line without echoing it.
+ */
+export const readHiddenLines = (
+  message: string,
+  options: {
+    readonly complete: (lines: ReadonlyArray<string>) => boolean
+    readonly note: (line: string) => string | undefined
+  }
+) =>
+  readHidden(message, lines => {
+    const last = lines.at(-1) ?? ''
+    const note = options.note(last)
+
+    const done = last.trim() === '' || options.complete(lines)
+
+    return note === undefined ? { done } : { done, note }
+  }).pipe(Effect.map(lines => lines.filter(line => Redacted.value(line).trim() !== '')))
 
 export const makePassphrase = (read: (message: string) => ReturnType<typeof readHiddenLine>) => {
   let cached: Redacted.Redacted<string> | undefined

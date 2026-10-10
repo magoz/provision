@@ -296,12 +296,12 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
 ### Manual follow-ups
 
 - **QStash.** A team's QStash credentials can only be read from inside that team, so the
-  `upstash` step creates the teams and then asks you to paste each team's `QSTASH_URL`,
-  `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, and `QSTASH_NEXT_SIGNING_KEY` (hidden input) from
-  the [Upstash console](https://console.upstash.com/qstash): switch to the team, choose the EU
-  region, copy each value. It writes them to Vercel like every other key: `<repo>-dev` to
+  `upstash` step creates the teams and then asks you to paste each team's `.env` block
+  (`QSTASH_URL`, `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY`) from the
+  [Upstash console](https://console.upstash.com/qstash): switch to the team, choose the EU region,
+  and copy the block from Quickstart. Input is hidden; each recognized line is confirmed by name. It writes them to Vercel like every other key: `<repo>-dev` to
   Development, Preview, and `test`; `<repo>-prod` to Production, Sensitive. Press Enter on an
-  empty value to skip; without a terminal, or when skipped, it prints a `manual:` line instead.
+  empty line to skip; without a terminal, or when skipped, it prints a `manual:` line instead.
   Runs ask only while Vercel is missing them:
 
   ```bash
@@ -311,10 +311,14 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
   ```text
   QStash for acme-app-dev → Vercel (Development, Preview, test)
     1. Open https://console.upstash.com/qstash and switch to team acme-app-dev
-       (team menu, top left).
-    2. Choose the EU region (eu-central-1) and copy each value below.
-    Press Enter on an empty value to skip and copy them into Vercel later.
-  QSTASH_URL:
+       (team menu, top left), EU region (eu-central-1).
+    2. In Quickstart, copy the .env block (all 4 lines) and paste it here, then Enter.
+    Press Enter on an empty line to skip and copy them into Vercel later.
+  QStash .env:
+    ✓ QSTASH_URL
+    ✓ QSTASH_TOKEN
+    ✓ QSTASH_CURRENT_SIGNING_KEY
+    ✓ QSTASH_NEXT_SIGNING_KEY
   ```
 
 - **DNS.** If the domain is not yet pointed at Vercel, add the record shown under the project's

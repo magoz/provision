@@ -11,7 +11,7 @@ import {
   type EnvGroup,
   type FactoryContext
 } from '../context.ts'
-import { SecretInput, type SecretInputShape } from '../secret-input.ts'
+import { SecretInput } from '../secret-input.ts'
 import { createTeam, findTeam } from '../providers/upstash.ts'
 import { listEnvRecords } from '../vercel-api.ts'
 
@@ -79,62 +79,64 @@ export const upstashStep = (context: FactoryContext) =>
         continue
       }
 
-      yield* writeGroup(
-        context,
-        handle.value,
-        target.group,
-        qstashVariableKeys.map((key, index) => ({
-          key,
-          value: values.value[index] ?? Redacted.make(''),
-          type: key === 'QSTASH_URL' ? 'encrypted' : target.type
-        }))
-      )
+      const { url, token, current, next } = values.value
+
+      yield* writeGroup(context, handle.value, target.group, [
+        { key: 'QSTASH_URL', value: url, type: 'encrypted' },
+        { key: 'QSTASH_TOKEN', value: token, type: target.type },
+        { key: 'QSTASH_CURRENT_SIGNING_KEY', value: current, type: target.type },
+        { key: 'QSTASH_NEXT_SIGNING_KEY', value: next, type: target.type }
+      ])
     }
   })
 
+interface QStashValues {
+  readonly url: Redacted.Redacted<string>
+  readonly token: Redacted.Redacted<string>
+  readonly current: Redacted.Redacted<string>
+  readonly next: Redacted.Redacted<string>
+}
+
 /**
- * Asks the operator to paste a team's QStash credentials from the Upstash console (a team's
- * QStash is only readable with a key created inside that team). An empty first value skips.
+ * Asks the operator to paste a team's QStash `.env` block from the Upstash console (a team's
+ * QStash is only readable with a key created inside that team). An empty line skips.
  */
 const askQStash = (team: string, group: EnvGroup) =>
   withTerminal(
     Effect.gen(function* () {
       const secrets = yield* SecretInput
-      const values: Array<Redacted.Redacted<string>> = []
+      let problem = ''
 
-      for (const [index, key] of qstashVariableKeys.entries()) {
-        const intro =
-          index === 0
-            ? `\nQStash for ${team} → Vercel (${group.label})\n` +
-              `  1. Open https://console.upstash.com/qstash and switch to team ${team}\n` +
-              `     (team menu, top left).\n` +
-              `  2. Choose the EU region (eu-central-1) and copy each value below.\n` +
-              `  Press Enter on an empty value to skip and copy them into Vercel later.\n`
-            : ''
-        const value = yield* readQStashValue(secrets, `${intro}${key}: `, key)
+      for (;;) {
+        const pasted = yield* secrets.readEnv(
+          `\nQStash for ${team} → Vercel (${group.label})\n` +
+            `  1. Open https://console.upstash.com/qstash and switch to team ${team}\n` +
+            `     (team menu, top left), EU region (eu-central-1).\n` +
+            `  2. In Quickstart, copy the .env block (all 4 lines) and paste it here, then Enter.\n` +
+            `  Press Enter on an empty line to skip and copy them into Vercel later.\n` +
+            `${problem}QStash .env: `,
+          qstashVariableKeys
+        )
 
-        if (Option.isNone(value)) return Option.none<ReadonlyArray<Redacted.Redacted<string>>>()
+        if (Option.isNone(pasted)) return Option.none<QStashValues>()
 
-        values.push(value.value)
+        const [url, token, current, next] = qstashVariableKeys.map(key => pasted.value.get(key))
+        const missing = qstashVariableKeys.filter(key => !pasted.value.has(key))
+
+        if (
+          url === undefined ||
+          token === undefined ||
+          current === undefined ||
+          next === undefined
+        ) {
+          problem = `  Missing ${missing.join(', ')}; paste the whole block again.\n`
+        } else if (!isHttpsUrl(Redacted.value(url))) {
+          problem = '  QSTASH_URL must be an https URL; paste the whole block again.\n'
+        } else {
+          return Option.some({ url, token, current, next })
+        }
       }
-
-      return Option.some<ReadonlyArray<Redacted.Redacted<string>>>(values)
     })
   ).pipe(Effect.mapError(error => factoryError(error.message)))
-
-const readQStashValue = (secrets: SecretInputShape, message: string, key: string) =>
-  Effect.gen(function* () {
-    let prompt = message
-
-    for (;;) {
-      const value = yield* secrets.read(prompt)
-
-      if (Option.isNone(value) || key !== 'QSTASH_URL' || isHttpsUrl(Redacted.value(value.value))) {
-        return value
-      }
-
-      prompt = `${key} must be an https URL, e.g. https://qstash-eu-central-1.upstash.io\n${key}: `
-    }
-  })
 
 const isHttpsUrl = (value: string) => URL.canParse(value) && new URL(value).protocol === 'https:'
