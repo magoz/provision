@@ -20,7 +20,7 @@ import { neonStep } from './steps/neon.ts'
 import { r2Step } from './steps/r2.ts'
 import { reportsStep } from './steps/reports.ts'
 import { resendStep } from './steps/resend.ts'
-import { secretsStep } from './steps/secrets.ts'
+import { parseSecretSpecs, secretsStep } from './steps/secrets.ts'
 import { upstashStep } from './steps/upstash.ts'
 import { vercelStep } from './steps/vercel.ts'
 
@@ -155,6 +155,7 @@ interface FactoryOptions {
   readonly only: Option.Option<string>
   readonly onExisting: OnExisting
   readonly neonParentBranch: Option.Option<string>
+  readonly secret: ReadonlyArray<string>
   readonly dryRun: boolean
 }
 
@@ -189,6 +190,8 @@ export const runFactory = (options: FactoryOptions) =>
       return yield* factoryError('--email-from must be an address such as noreply@acme.com')
     }
 
+    const secrets = yield* parseSecretSpecs(options.secret)
+
     const factory = yield* selectFactory(yield* readRegistry, options.factory, owner)
 
     if (factory.credentials.githubOwner !== owner) {
@@ -209,6 +212,7 @@ export const runFactory = (options: FactoryOptions) =>
       senderName: Option.getOrElse(options.senderName, () => name),
       emailFrom,
       neonParentBranch: Option.getOrUndefined(options.neonParentBranch),
+      secrets,
       dryRun: options.dryRun,
       onExisting: options.onExisting,
       names: { project: name, development: `${name}-dev`, production: `${name}-prod` }
@@ -279,6 +283,12 @@ export const factoryCommand = Command.make(
     neonParentBranch: Flag.String('neon-parent-branch').pipe(
       Flag.withDescription('existing-branch mode: sandbox parent branch id'),
       Flag.optional
+    ),
+    secret: Flag.String('secret').pipe(
+      Flag.withDescription(
+        'repeatable: a secret the code reads, NAME[=base64-<bytes>|hex-<bytes>|vapid] (default base64-32), generated per environment group'
+      ),
+      Flag.atLeast(0)
     ),
     dryRun: Flag.Boolean('dry-run').pipe(
       Flag.withDescription('inspect and print planned changes without making them'),

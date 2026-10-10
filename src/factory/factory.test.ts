@@ -113,6 +113,16 @@ const records = (world: FakeWorld) => [...world.vercel.envs.values()].flat()
 const recordFor = (world: FakeWorld, key: string, target: string) =>
   records(world).filter(record => record.key === key && record.target.includes(target))
 
+/** What an agent passes for a 10x-style app after reading its code. */
+const secretFlags = [
+  '--secret',
+  'BETTER_AUTH_SECRET',
+  '--secret',
+  'CRON_SECRET=hex-32',
+  '--secret',
+  'VAPID=vapid'
+]
+
 /** The `.env` block QStash's console Quickstart offers to copy. */
 const qstashBlock = (url: string, token: string) =>
   [
@@ -131,7 +141,7 @@ describe('provision factory', () => {
     Effect.gen(function* () {
       const { repo, world, invocations, run } = yield* setup()
 
-      yield* run('--on-existing', 'abort')
+      yield* run('--on-existing', 'abort', ...secretFlags)
       expect(process.exitCode).toBeUndefined()
 
       const project = [...world.vercel.projects.values()][0]
@@ -246,10 +256,10 @@ describe('provision factory', () => {
   it.live('changes nothing when rerun with reuse', () =>
     Effect.gen(function* () {
       const { world, run } = yield* setup()
-      yield* run('--on-existing', 'abort')
+      yield* run('--on-existing', 'abort', ...secretFlags)
       const before = world.mutations.length
 
-      yield* run('--on-existing', 'reuse')
+      yield* run('--on-existing', 'reuse', ...secretFlags)
 
       expect(process.exitCode).toBeUndefined()
       expect(world.mutations.slice(before)).toEqual([])
@@ -259,11 +269,11 @@ describe('provision factory', () => {
   it.live('rotates keys and secrets on overwrite but never recreates data', () =>
     Effect.gen(function* () {
       const { world, run } = yield* setup()
-      yield* run('--on-existing', 'abort')
+      yield* run('--on-existing', 'abort', ...secretFlags)
       const tokens = world.cloudflare.tokens.map(token => token.id)
       const auth = recordFor(world, 'BETTER_AUTH_SECRET', 'production')[0]?.value
 
-      yield* run('--on-existing', 'overwrite')
+      yield* run('--on-existing', 'overwrite', ...secretFlags)
 
       expect(process.exitCode).toBeUndefined()
       expect(world.neon.projects).toHaveLength(2)
@@ -310,9 +320,9 @@ describe('provision factory', () => {
       yield* run('--on-existing', 'abort', '--only', 'vercel')
 
       yield* run('--only', 'secrets', '--on-existing', 'abort')
-      expect(process.exitCode).toBe(2)
+      expect(process.exitCode).toBeUndefined()
+      expect(recordFor(world, 'AUTH_EMAIL_FROM', 'production')).toEqual([])
 
-      process.exitCode = undefined
       yield* run('--only', 'secrets', '--on-existing', 'abort', '--email-from', 'hi@pending.test')
       expect(process.exitCode).toBe(2)
 
@@ -325,13 +335,93 @@ describe('provision factory', () => {
     })
   )
 
+  it.live('generates only the secrets passed with --secret', () =>
+    Effect.gen(function* () {
+      const { world, run } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+
+      yield* run(
+        '--only',
+        'secrets',
+        '--secret',
+        'CREDENTIAL_ENCRYPTION_KEY',
+        '--secret',
+        'CRON_SECRET=hex-32'
+      )
+
+      expect(process.exitCode).toBeUndefined()
+      const keys = new Set(records(world).map(record => record.key))
+      expect([...keys].toSorted()).toEqual([
+        'ALLOW_E2E_DATABASE_RESET',
+        'AUTH_EMAIL_FROM',
+        'CREDENTIAL_ENCRYPTION_KEY',
+        'CRON_SECRET'
+      ])
+      expect(
+        Buffer.from(
+          recordFor(world, 'CREDENTIAL_ENCRYPTION_KEY', 'preview')[0]?.value ?? '',
+          'base64'
+        )
+      ).toHaveLength(32)
+      expect(recordFor(world, 'CRON_SECRET', 'production')[0]?.value).toMatch(/^[0-9a-f]{64}$/)
+    })
+  )
+
+  it.live('never replaces a secret set in only part of an environment group without asking', () =>
+    Effect.gen(function* () {
+      // No sender, so the secret is the only thing that exists.
+      const withoutDomain = { ...itemFields }
+      delete withoutDomain['resend.sending_domain']
+      const { world, run } = yield* setup(withoutDomain)
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      yield* run('--only', 'secrets', '--secret', 'BETTER_AUTH_SECRET')
+
+      for (const [projectId, envs] of world.vercel.envs) {
+        world.vercel.envs.set(
+          projectId,
+          envs.map(record =>
+            record.key === 'BETTER_AUTH_SECRET' && record.target.includes('preview')
+              ? { ...record, target: ['development'] }
+              : record
+          )
+        )
+      }
+      const development = recordFor(world, 'BETTER_AUTH_SECRET', 'development')[0]?.value
+      const before = world.mutations.length
+
+      yield* run('--only', 'secrets', '--secret', 'BETTER_AUTH_SECRET', '--on-existing', 'reuse')
+      expect(world.mutations.slice(before)).toEqual([])
+
+      yield* run('--only', 'secrets', '--secret', 'BETTER_AUTH_SECRET', '--on-existing', 'abort')
+      expect(process.exitCode).toBe(2)
+      expect(recordFor(world, 'BETTER_AUTH_SECRET', 'development')[0]?.value).toBe(development)
+    })
+  )
+
+  it.live('rejects malformed --secret values before doing anything', () =>
+    Effect.gen(function* () {
+      const { world, invocations, run } = yield* setup()
+
+      for (const value of ['lower_case', 'TOKEN=base64-8', 'TOKEN=uuid', 'A=hex-32=x']) {
+        process.exitCode = undefined
+        yield* run('--secret', value)
+        expect(process.exitCode).toBe(2)
+      }
+
+      yield* run('--secret', 'VAPID=vapid', '--secret', 'VAPID_PUBLIC_KEY')
+      expect(process.exitCode).toBe(2)
+      expect(world.mutations).toEqual([])
+      expect(invocations.filter(invocation => invocation.command === 'op')).toEqual([])
+    })
+  )
+
   it.live('lets the other steps finish when one fails', () =>
     Effect.gen(function* () {
       const withoutDomain = { ...itemFields }
       delete withoutDomain['resend.sending_domain']
 
       const { world, run } = yield* setup(withoutDomain)
-      yield* run('--on-existing', 'abort')
+      yield* run('--on-existing', 'abort', '--email-from', 'hi@pending.test')
 
       expect(process.exitCode).toBe(2)
       expect(recordFor(world, 'AUTH_EMAIL_FROM', 'production')).toEqual([])

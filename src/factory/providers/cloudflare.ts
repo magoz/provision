@@ -41,11 +41,14 @@ export const createBucket = (admin: CloudflareAdmin, name: string) =>
     { method: 'POST', headers: headers(admin.apiToken), body: { name } }
   ).pipe(Effect.asVoid)
 
-/** Browser uploads use presigned PUTs; CORS allows exactly that. */
+/**
+ * Browser uploads use presigned PUTs; CORS allows exactly that, with the headers a signed upload
+ * binds (`content-type`, and `if-none-match` for create-only uploads).
+ */
 const corsRules = (origin: string) => [
   {
     id: 'browser-uploads',
-    allowed: { methods: ['PUT'], origins: [origin], headers: ['content-type'] },
+    allowed: { methods: ['PUT'], origins: [origin], headers: ['content-type', 'if-none-match'] },
     exposeHeaders: ['etag'],
     maxAgeSeconds: 3600
   }

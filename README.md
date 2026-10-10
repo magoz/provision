@@ -220,7 +220,8 @@ Revoke immediately if the host may be compromised.
 provision factory [--checkout <repo>] --domain <production-host>
                   [--sender-name <name>] [--email-from <address>]
                   [--factory <name>] [--only vercel,neon,r2,upstash,resend,reports,secrets,domain]
-                  [--on-existing ask|reuse|overwrite|abort] [--neon-parent-branch <id>] [--dry-run]
+                  [--on-existing ask|reuse|overwrite|abort] [--neon-parent-branch <id>]
+                  [--secret NAME[=base64-<bytes>|hex-<bytes>|vapid]]... [--dry-run]
 ```
 
 Creates what the repository declares (`provision.factory.steps`, narrowed by `--only`) for the
@@ -235,15 +236,26 @@ checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Ver
 | `upstash` | `<repo>-dev`/`-prod` teams                                                                         | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups)) |
 | `resend`  | sending-only keys (any verified domain)                                                            | `RESEND_API_KEY`                                                        |
 | `reports` | report tokens from the factory's receiver                                                          | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                          |
-| `secrets` | generated `BETTER_AUTH_SECRET`, `INTEGRATION_CREDENTIAL_ENCRYPTION_KEY`, `CRON_SECRET`, VAPID pair | those, plus `AUTH_EMAIL_FROM`, `AI_PROVIDER_USAGE_ALERT_THRESHOLDS`     |
+| `secrets` | the secrets named with `--secret` (generated, never shown)                                         | those, plus `AUTH_EMAIL_FROM` when a sender is known                    |
 | `domain`  | attaches `--domain` to the project                                                                 | —                                                                       |
 
 - **Environments.** Pre-production values go to Development, Preview, and `test`; production values
   go to Production and are Sensitive. Each side gets its own keys and secrets.
 - **`--domain`** is the production host. The `r2` step allows browser uploads to the production
   bucket only from `https://<domain>`; the development bucket accepts any origin.
-- **`--email-from`** sets `AUTH_EMAIL_FROM` (`"<sender-name> <address>"`). The address's domain must
-  be verified in the factory's Resend account.
+- **`--email-from`** sets `AUTH_EMAIL_FROM` (`"<sender-name> <address>"`), defaulting to
+  `noreply@<resend.sending_domain>`. The address's domain must be verified in the factory's Resend
+  account. Without either, `AUTH_EMAIL_FROM` is not written.
+- **`--secret`** (repeatable) names a secret the repository's code reads; nothing is generated
+  that isn't asked for. `NAME` alone is 32 random bytes in base64; `NAME=hex-32` is hex;
+  `NAME=vapid` is a web-push pair written as `NAME_PUBLIC_KEY` (plain) and `NAME_PRIVATE_KEY`.
+  Pre-production and production get separate values. A secret already in Vercel, even in only
+  part of an environment group, is replaced only when `--on-existing` says so.
+- **Which flags.** The repository's code decides: the variables it reads (`.env.example`, its
+  config reads) minus what `vercel env ls` already lists. Provider keys come from their steps
+  (`--only`), generated secrets from `--secret`; third-party keys and plain settings are added
+  with `vercel env add`. The [agent skill](#agents) does this and prepares the command.
+- **R2 uploads** allow the headers a signed upload binds: `content-type` and `if-none-match`.
 - **Order.** `vercel` runs first; the other steps then run concurrently. Each step prints one block
   when it finishes, and a failing step lets the others finish before the run fails.
 
@@ -252,11 +264,13 @@ checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Ver
 ```bash
 # 1. Plan: reads every provider, changes nothing
 provision factory --checkout ~/src/acme-app --domain app.acme.com \
-  --sender-name Acme --email-from noreply@acme.com --dry-run
+  --sender-name Acme --email-from noreply@acme.com \
+  --secret BETTER_AUTH_SECRET --secret CRON_SECRET=hex-32 --dry-run
 
 # 2. Apply
 provision factory --checkout ~/src/acme-app --domain app.acme.com \
-  --sender-name Acme --email-from noreply@acme.com
+  --sender-name Acme --email-from noreply@acme.com \
+  --secret BETTER_AUTH_SECRET --secret CRON_SECRET=hex-32
 
 # 3. Rerun: should only report "reusing"
 provision factory --checkout ~/src/acme-app --domain app.acme.com \
@@ -456,7 +470,7 @@ passphrase read from the terminal: an agent that hides its variables still canno
 ```json
 {
   "contractVersion": 1,
-  "provisionVersion": "0.1.1",
+  "provisionVersion": "0.2.0",
   "commands": ["contract", "config", "factory", "env", "db"]
 }
 ```

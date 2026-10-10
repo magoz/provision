@@ -2,6 +2,7 @@ import { Console, Data, Effect, Option, Semaphore, type Redacted } from 'effect'
 import { Prompt } from 'effect/cli'
 import type { RepoConfig } from '../shared/repo-config.ts'
 import type { FactoryCredentials } from './onepassword.ts'
+import type { SecretSpec } from './steps/secrets.ts'
 import {
   createEnvRecord,
   deleteEnvRecord,
@@ -49,6 +50,8 @@ export interface FactoryContext {
   /** Sender address for `AUTH_EMAIL_FROM`; defaults to `noreply@<resend.sending_domain>`. */
   readonly emailFrom: string | undefined
   readonly neonParentBranch: string | undefined
+  /** `--secret` values to generate (the variables the repository's code reads). */
+  readonly secrets: ReadonlyArray<SecretSpec>
   readonly dryRun: boolean
   readonly onExisting: OnExisting
   readonly names: {
@@ -234,6 +237,18 @@ export const groupHasKeys = (
   group: EnvGroup,
   keys: ReadonlyArray<string>
 ) => keys.every(key => records.some(record => record.key === key && covers(record, group)))
+
+/** Whether the group has every key everywhere (`complete`), some of it (`partial`), or none. */
+export const groupKeyState = (
+  records: ReadonlyArray<EnvRecord>,
+  group: EnvGroup,
+  keys: ReadonlyArray<string>
+) =>
+  groupHasKeys(records, group, keys)
+    ? ('complete' as const)
+    : keys.some(key => records.some(record => record.key === key && overlaps(record, group)))
+      ? ('partial' as const)
+      : ('none' as const)
 
 export interface EnvEntry {
   readonly key: string

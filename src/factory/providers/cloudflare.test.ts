@@ -4,7 +4,7 @@ import { corsRulesMatch } from './cloudflare.ts'
 const origin = 'https://app.acme.test'
 
 const rule = {
-  allowed: { methods: ['PUT'], origins: [origin], headers: ['content-type'] },
+  allowed: { methods: ['PUT'], origins: [origin], headers: ['content-type', 'if-none-match'] },
   exposeHeaders: ['etag'],
   maxAgeSeconds: 3600
 }
@@ -17,7 +17,11 @@ describe('corsRulesMatch', () => {
           {
             maxAgeSeconds: 3600,
             exposeHeaders: ['ETag'],
-            allowed: { headers: ['Content-Type'], origins: [origin], methods: ['PUT'] }
+            allowed: {
+              headers: ['If-None-Match', 'Content-Type'],
+              origins: [origin],
+              methods: ['PUT']
+            }
           }
         ],
         origin
