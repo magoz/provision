@@ -8,7 +8,8 @@ import {
   mutate,
   requireProject,
   writeGroup,
-  type FactoryContext
+  type FactoryContext,
+  type ProjectHandle
 } from '../context.ts'
 import {
   connectionUri,
@@ -17,13 +18,21 @@ import {
   findApiKey,
   findProject,
   listBranches,
+  listDatabases,
   neonProductionHistoryRetentionSeconds,
   protectBranch,
+  renameBranch,
   revokeApiKey,
   type NeonAdmin
 } from '../providers/neon.ts'
 import { ensureScopedKey } from '../scoped-key.ts'
-import { listEnvRecords } from '../vercel-api.ts'
+import {
+  deleteEnvRecord,
+  listEnvRecords,
+  listIntegrationConfigurations,
+  recordTargets,
+  type EnvRecord
+} from '../vercel-api.ts'
 
 /** Finds or creates a Neon project; returns its id and protected default branch (`None` in a dry run). */
 const ensureProject = (
@@ -31,7 +40,7 @@ const ensureProject = (
   admin: NeonAdmin,
   name: string,
   branchName: string,
-  historyRetentionSeconds?: number
+  options: { readonly historyRetentionSeconds?: number; readonly renameDefault?: boolean } = {}
 ) =>
   Effect.gen(function* () {
     const existing = yield* findProject(admin, name)
@@ -43,6 +52,16 @@ const ensureProject = (
 
       if (branch === undefined) {
         return yield* factoryError(`Neon project ${name} has no default branch`)
+      }
+
+      // An existing default branch keeps its data; only a misleading name (for example Neon's
+      // default `production` in a dev project) is corrected.
+      if (options.renameDefault === true && branch.name !== branchName) {
+        yield* mutate(
+          context,
+          `rename Neon branch ${name}/${branch.name} to ${branchName}`,
+          renameBranch(admin, existing.value.id, branch.id, branchName)
+        )
       }
 
       if (branch.protected !== true) {
@@ -62,7 +81,9 @@ const ensureProject = (
       createProject(admin, {
         name,
         branchName,
-        ...(historyRetentionSeconds === undefined ? {} : { historyRetentionSeconds })
+        ...(options.historyRetentionSeconds === undefined
+          ? {}
+          : { historyRetentionSeconds: options.historyRetentionSeconds })
       }).pipe(Effect.tap(response => protectBranch(admin, response.project.id, response.branch.id)))
     )
 
@@ -70,6 +91,108 @@ const ensureProject = (
       projectId: response.project.id,
       branch: response.branch
     }))
+  })
+
+/** Variables Neon's Vercel integration can write (its selectable database variables). */
+const databaseKey = /^(DATABASE_URL(_UNPOOLED)?|PG[A-Z_]*|POSTGRES_[A-Z_]*)$/
+
+const outsidePreview = (record: EnvRecord) =>
+  recordTargets(record).some(target => target === 'production' || target === 'development')
+
+/**
+ * Preview deployments get their own database from Neon's Vercel integration (one branch per git
+ * branch, copied from `<repo>-dev`): only that integration can hand a database to a deployment
+ * before it builds. It also writes Production and Development variables pointing at `<repo>-dev`;
+ * those are removed (Production gets `<repo>-prod` back). Not connected yet: prints how.
+ * Connected means the team's Neon integration has access to this Vercel project.
+ */
+const previewIntegration = (
+  context: FactoryContext,
+  admin: NeonAdmin,
+  handle: ProjectHandle,
+  records: ReadonlyArray<EnvRecord>,
+  sandbox: Option.Option<{ readonly projectId: string; readonly parentBranch: string | undefined }>
+) =>
+  Effect.gen(function* () {
+    const teamId = context.credentials.vercel.teamId
+    const projectId = handle.project.id
+    const configurations = yield* listIntegrationConfigurations(teamId, 'neon')
+    const configurationIds = new Set(configurations.map(configuration => configuration.id))
+    const connected = configurations.some(
+      configuration =>
+        configuration.projects === undefined ||
+        configuration.projects === null ||
+        configuration.projects.includes(projectId)
+    )
+
+    if (connected) {
+      const owned = records.filter(
+        record =>
+          typeof record.configurationId === 'string' &&
+          configurationIds.has(record.configurationId) &&
+          databaseKey.test(record.key) &&
+          outsidePreview(record)
+      )
+
+      if (owned.length > 0) {
+        const keys = [...new Set(owned.map(record => record.key))].join(', ')
+        const targets = [...new Set(owned.flatMap(recordTargets))].join(', ')
+
+        yield* mutate(
+          context,
+          `remove the Neon integration's ${keys} from Vercel (${targets})`,
+          Effect.forEach(owned, record => deleteEnvRecord(teamId, projectId, record.id), {
+            discard: true
+          })
+        )
+      }
+
+      return { connected: true, removed: owned.map(record => record.id) }
+    }
+
+    const development = context.names.development
+    const project = handle.project.name
+    const databases =
+      Option.isSome(sandbox) && sandbox.value.parentBranch !== undefined
+        ? yield* listDatabases(admin, sandbox.value.projectId, sandbox.value.parentBranch)
+        : []
+    const database = databases.length === 1 ? databases[0] : undefined
+    const connection =
+      database === undefined
+        ? `the app database and its owner role`
+        : `database ${database.name}, role ${database.owner_name}`
+    const blocking = [
+      ...new Set(
+        records
+          .filter(record => databaseKey.test(record.key) && outsidePreview(record))
+          .flatMap(record =>
+            recordTargets(record)
+              .filter(target => target === 'production' || target === 'development')
+              .map(environment => `${record.key} ${environment}`)
+          )
+      )
+    ]
+    const steps = [
+      `Vercel → team → Integrations → Neon → Manage Access: add project ${project} (no Neon? Marketplace → Neon → Link Existing Neon Account)`,
+      ...(blocking.length === 0
+        ? []
+        : [
+            `remove these first (the integration refuses to connect while they exist; running deployments keep theirs): cd ${context.appDirectory} && ${blocking.map(entry => `vercel env rm ${entry} --yes`).join(' && ')}`
+          ]),
+      `Neon → project ${development} → Integrations → Vercel → connect ${connection}, Vercel project ${project}. After a failed attempt, delete the vercel-dev branch it leaves in ${development} before retrying`,
+      `rerun: provision factory --checkout ${context.checkout.root} --only neon (Production goes back to ${context.names.production}, Development is cleared)`
+    ]
+
+    yield* Console.log(
+      [
+        `  manual: connect Neon's Vercel integration so each Preview branch gets its own database (preview/<git-branch>, copied from ${development}):`,
+        ...steps.map((step, index) => `    ${index + 1}. ${step}`)
+      ].join('\n')
+    )
+
+    const removed: ReadonlyArray<string> = []
+
+    return { connected: false, removed }
   })
 
 /**
@@ -105,7 +228,9 @@ export const neonStep = (context: FactoryContext) =>
     }> =
       mode === 'empty-baseline'
         ? Option.map(
-            yield* ensureProject(context, admin, context.names.development, 'baseline'),
+            yield* ensureProject(context, admin, context.names.development, 'baseline', {
+              renameDefault: true
+            }),
             project => ({ projectId: project.projectId, parentBranch: project.branch.id })
           )
         : yield* findProject(admin, context.names.development).pipe(
@@ -156,16 +281,31 @@ export const neonStep = (context: FactoryContext) =>
       })
     }
 
+    // Preview databases ---------------------------------------------------------
+    const previews = yield* previewIntegration(context, admin, handle.value, records, sandbox)
+    const remaining = records.filter(record => !previews.removed.includes(record.id))
+
     // Production ---------------------------------------------------------------
     const production = yield* ensureProject(
       context,
       admin,
       context.names.production,
       'production',
-      neonProductionHistoryRetentionSeconds
+      { historyRetentionSeconds: neonProductionHistoryRetentionSeconds }
     )
 
     if (Option.isNone(production)) return
+
+    if (
+      !previews.connected &&
+      !groupHasKeys(remaining, groups.production, defaultDatabaseUrlKeys)
+    ) {
+      yield* Console.log(
+        `  held back: Production DATABASE_URL (${context.names.production}) is written once Neon's Vercel integration is connected, which refuses to connect while Production has one`
+      )
+
+      return
+    }
 
     const { projectId, branch } = production.value
     const writeUrls = Effect.gen(function* () {
@@ -179,7 +319,7 @@ export const neonStep = (context: FactoryContext) =>
       ])
     })
 
-    if (groupHasKeys(records, groups.production, defaultDatabaseUrlKeys)) {
+    if (groupHasKeys(remaining, groups.production, defaultDatabaseUrlKeys)) {
       const decision = yield* decide(context, 'key', 'production DATABASE_URL records')
 
       if (decision === 'reuse') return

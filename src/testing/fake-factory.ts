@@ -22,9 +22,12 @@ export interface FakeWorld {
         type: string
         target: ReadonlyArray<string>
         customEnvironmentIds: ReadonlyArray<string>
+        configurationId?: string
       }>
     >
     readonly domains: Map<string, Array<string>>
+    /** Installed integrations; `projects: null` means access to every project. */
+    readonly integrations: Array<{ id: string; slug: string; projects: Array<string> | null }>
   }
   readonly neon: {
     readonly projects: Array<{
@@ -54,7 +57,8 @@ export const makeWorld = (): FakeWorld => ({
     projects: new Map(),
     customEnvironments: new Map(),
     envs: new Map(),
-    domains: new Map()
+    domains: new Map(),
+    integrations: [{ id: 'icfg_neon', slug: 'neon', projects: null }]
   },
   neon: { projects: [], apiKeys: [] },
   cloudflare: { buckets: new Map(), tokens: [] },
@@ -106,6 +110,12 @@ const vercelApi = (world: FakeWorld, invocation: Invocation): ScriptResult => {
   const found = [...world.vercel.projects.values()].find(
     candidate => candidate.id === project || candidate.name === project
   )
+
+  if (path === '/integrations/configurations' && method === 'GET') {
+    const slug = url.searchParams.get('integrationIdOrSlug')
+
+    return ok(world.vercel.integrations.filter(configuration => configuration.slug === slug))
+  }
 
   if (path === '/projects' && method === 'POST') {
     const created = {
@@ -355,7 +365,11 @@ const neon = (world: FakeWorld, method: string, url: URL, body: unknown) => {
   }
 
   if (branch !== undefined && method === 'PATCH') {
-    branch.protected = true
+    const update = field(body, 'branch')
+    const name = text(update, 'name')
+
+    if (name !== '') branch.name = name
+    else branch.protected = true
 
     return json({ branch })
   }

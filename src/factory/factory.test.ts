@@ -487,6 +487,81 @@ describe('provision factory', () => {
     })
   )
 
+  it.live(
+    "holds Production back until Neon's Vercel integration is connected, then replaces its variables",
+    () =>
+      Effect.gen(function* () {
+        const { world, run } = yield* setup()
+        world.vercel.integrations.splice(0, 1, { id: 'icfg_neon', slug: 'neon', projects: [] })
+
+        yield* run('--on-existing', 'abort', '--only', 'vercel,neon')
+        expect(process.exitCode).toBeUndefined()
+        expect(world.neon.projects.map(project => project.name)).toEqual([
+          'acme-app-dev',
+          'acme-app-prod'
+        ])
+        expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([])
+
+        // The operator connects the integration: Vercel access, plus its own variables.
+        const project = [...world.vercel.projects.values()][0]
+        const projectId = project?.id ?? ''
+        world.vercel.integrations.splice(0, 1, {
+          id: 'icfg_neon',
+          slug: 'neon',
+          projects: [projectId]
+        })
+        world.vercel.envs.set(projectId, [
+          ...(world.vercel.envs.get(projectId) ?? []),
+          ...['production', 'development'].flatMap(target =>
+            ['DATABASE_URL', 'DATABASE_URL_UNPOOLED'].map(key => ({
+              id: `neon-${key}-${target}`,
+              key,
+              value: 'postgres://acme-app-dev/neondb',
+              type: 'encrypted',
+              target: [target],
+              customEnvironmentIds: [],
+              configurationId: 'icfg_neon'
+            }))
+          )
+        ])
+
+        yield* run('--on-existing', 'reuse', '--only', 'neon')
+        expect(process.exitCode).toBeUndefined()
+        expect(records(world).filter(record => record.configurationId !== undefined)).toEqual([])
+        expect(recordFor(world, 'DATABASE_URL', 'development')).toEqual([])
+        expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([
+          expect.objectContaining({
+            value: 'postgres://acme-app-prod-pooler/neondb',
+            type: 'sensitive'
+          })
+        ])
+      })
+  )
+
+  it.live("renames a reused dev project's default branch to baseline, keeping its id", () =>
+    Effect.gen(function* () {
+      const { world, run } = yield* setup()
+      world.neon.projects.push({
+        id: 'neon-existing-dev',
+        name: 'acme-app-dev',
+        branches: [{ id: 'br-dev', name: 'production', default: true, protected: false }]
+      })
+
+      yield* run('--on-existing', 'reuse', '--only', 'vercel,neon')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(world.neon.projects[0]?.branches[0]).toEqual({
+        id: 'br-dev',
+        name: 'baseline',
+        default: true,
+        protected: true
+      })
+      expect(recordFor(world, 'SANDBOX_DB_PARENT_BRANCH_ID', 'development')[0]?.value).toBe(
+        'br-dev'
+      )
+    })
+  )
+
   it.live('mutates nothing in a dry run', () =>
     Effect.gen(function* () {
       const { world, run } = yield* setup()

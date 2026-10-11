@@ -172,7 +172,9 @@ export const EnvRecord = Schema.Struct({
   key: Schema.String,
   type: Schema.String,
   target: Schema.optional(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
-  customEnvironmentIds: Schema.optional(Schema.Array(Schema.String))
+  customEnvironmentIds: Schema.optional(Schema.Array(Schema.String)),
+  /** Set when an integration owns the record (for example Neon's Vercel integration). */
+  configurationId: Schema.optional(Schema.NullOr(Schema.String))
 })
 
 export type EnvRecord = typeof EnvRecord.Type
@@ -256,6 +258,38 @@ export const createEnvRecord = (
       }
     }
   ).pipe(Effect.asVoid)
+
+// ---------------------------------------------------------------------------
+// integrations
+// ---------------------------------------------------------------------------
+
+const IntegrationConfiguration = Schema.Struct({
+  id: Schema.String,
+  slug: Schema.optional(Schema.String),
+  /** Projects the team gave the integration access to; `null` or absent means all projects. */
+  projects: Schema.optional(Schema.NullOr(Schema.Array(Schema.String)))
+})
+
+const IntegrationConfigurations = Schema.Union([
+  Schema.Array(IntegrationConfiguration),
+  Schema.Struct({ configurations: Schema.Array(IntegrationConfiguration) })
+])
+
+/** The team's installations of the integration `slug` (for example `neon`). */
+export const listIntegrationConfigurations = (teamId: string, slug: string) =>
+  vercelApi(
+    teamId,
+    'integration listing',
+    `/v1/integrations/configurations?view=account&integrationIdOrSlug=${encodeURIComponent(slug)}`
+  ).pipe(
+    Effect.flatMap(found => required('integration listing', found)),
+    Effect.flatMap(value => decode('integration listing', IntegrationConfigurations, value)),
+    Effect.map(decoded =>
+      ('configurations' in decoded ? decoded.configurations : decoded).filter(
+        configuration => configuration.slug === undefined || configuration.slug === slug
+      )
+    )
+  )
 
 export const deleteEnvRecord = (teamId: string, projectId: string, recordId: string) =>
   vercelApi(

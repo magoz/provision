@@ -232,16 +232,16 @@ Creates what the repository declares (`provision.factory.steps`, narrowed by `--
 checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Vercel project),
 `<repo>-dev` (pre-production), and `<repo>-prod` (production).
 
-| Step      | Creates                                                                                            | Vercel env vars                                                         |
-| --------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link            | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                              |
-| `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production)    |
-| `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                        | `R2_*`                                                                  |
-| `upstash` | `<repo>-dev`/`-prod` teams                                                                         | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups)) |
-| `resend`  | sending-only keys (any verified domain)                                                            | `RESEND_API_KEY`                                                        |
-| `reports` | report tokens from the factory's receiver                                                          | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                          |
-| `secrets` | the secrets named with `--secret` (generated, never shown)                                         | those, plus `AUTH_EMAIL_FROM` when a sender is known                    |
-| `domain`  | attaches `--domain` to the project                                                                 | —                                                                       |
+| Step      | Creates                                                                                                                                                 | Vercel env vars                                                         |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link                                                                 | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                              |
+| `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production)    |
+| `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                             | `R2_*`                                                                  |
+| `upstash` | `<repo>-dev`/`-prod` teams                                                                                                                              | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups)) |
+| `resend`  | sending-only keys (any verified domain)                                                                                                                 | `RESEND_API_KEY`                                                        |
+| `reports` | report tokens from the factory's receiver                                                                                                               | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                          |
+| `secrets` | the secrets named with `--secret` (generated, never shown)                                                                                              | those, plus `AUTH_EMAIL_FROM` when a sender is known                    |
+| `domain`  | attaches `--domain` to the project                                                                                                                      | —                                                                       |
 
 - **Environments.** Pre-production values go to Development, Preview, and `test`; production values
   go to Production and are Sensitive. Each side gets its own keys and secrets.
@@ -339,6 +339,20 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
     ✓ QSTASH_NEXT_SIGNING_KEY
   ```
 
+- **Preview databases.** Each Preview branch gets its own database from Neon's Vercel integration
+  (Neon-managed, connected to `<repo>-dev`): a branch `preview/<git-branch>` copied from
+  `baseline`, handed to the branch's deployments before they build. Only an integration can do
+  that, so you connect it once per project; until then the `neon` step prints the steps and holds
+  back Production's `DATABASE_URL`, because the integration refuses to connect while Production
+  or Development has one. Once Vercel's Neon integration has access to the project, the step
+  removes the `DATABASE_URL*` (and `PG*`/`POSTGRES_*`) records the integration writes for
+  Production and Development, and writes `<repo>-prod` to Production. Rerun `--only neon` after
+  changing the integration's settings or rotating `<repo>-dev`'s role password, which makes Neon
+  write its variables again. Apps should migrate in every build that has a database, previews
+  included. If the connect dialog fails, delete the `vercel-dev` branch it leaves in
+  `<repo>-dev` before retrying; keep it once connected.
+- **Branch name.** A reused `<repo>-dev` project whose default branch has another name (Neon's
+  default is `production`) gets it renamed to `baseline`; its id and data are unchanged.
 - **DNS.** If the domain is not yet pointed at Vercel, add the record shown under the project's
   Domains settings at your DNS provider.
 
@@ -474,7 +488,7 @@ passphrase read from the terminal: an agent that hides its variables still canno
 ```json
 {
   "contractVersion": 1,
-  "provisionVersion": "0.2.1",
+  "provisionVersion": "0.3.0",
   "commands": ["contract", "config", "factory", "env", "db"]
 }
 ```

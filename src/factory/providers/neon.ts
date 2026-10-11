@@ -102,6 +102,28 @@ export const protectBranch = (admin: NeonAdmin, projectId: string, branchId: str
     })
   )
 
+/** Renames a branch (its id, data, and children are unchanged). */
+export const renameBranch = (admin: NeonAdmin, projectId: string, branchId: string, name: string) =>
+  requestJsonRequired(
+    'Neon branch rename',
+    `${API_ROOT}/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branchId)}`,
+    Schema.Struct({ branch: Branch }),
+    { method: 'PATCH', headers: headers(admin), body: { branch: { name } } }
+  ).pipe(
+    Effect.retry({
+      schedule: whileLocked,
+      while: error => error.status === 423 || error.status === 409
+    })
+  )
+
+export const listDatabases = (admin: NeonAdmin, projectId: string, branchId: string) =>
+  requestJsonRequired(
+    'Neon database listing',
+    `${API_ROOT}/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branchId)}/databases`,
+    Schema.Struct({ databases: Schema.Array(Database) }),
+    { headers: headers(admin) }
+  ).pipe(Effect.map(response => response.databases))
+
 export const connectionUri = (
   admin: NeonAdmin,
   projectId: string,
@@ -109,17 +131,12 @@ export const connectionUri = (
   pooled: boolean
 ) =>
   Effect.gen(function* () {
-    const databases = yield* requestJsonRequired(
-      'Neon database listing',
-      `${API_ROOT}/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branchId)}/databases`,
-      Schema.Struct({ databases: Schema.Array(Database) }),
-      { headers: headers(admin) }
-    )
-    const database = databases.databases.length === 1 ? databases.databases[0] : undefined
+    const databases = yield* listDatabases(admin, projectId, branchId)
+    const database = databases.length === 1 ? databases[0] : undefined
 
     if (database === undefined) {
       return yield* new ProviderError({
-        message: `expected one database on Neon branch ${branchId}, found ${databases.databases.length}`
+        message: `expected one database on Neon branch ${branchId}, found ${databases.length}`
       })
     }
 
