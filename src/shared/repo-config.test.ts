@@ -73,24 +73,17 @@ describe('parseRepoConfig', () => {
     })
   )
 
-  it.effect('falls back to legacy keys during the transition', () =>
+  it.effect('points legacy keys to their replacements', () =>
     Effect.gen(function* () {
-      const legacy = yield* parseRepoConfig(
-        packageJson({
-          provisionEnv: { appDir: 'apps/web' },
-          worktree: { setup: ['pnpm db:migrate'] }
-        })
-      )
-      expect(legacy.appDir).toBe('apps/web')
-      expect(legacy.setup).toEqual(['pnpm db:migrate'])
+      const setup = yield* parseRepoConfig(
+        packageJson({ worktree: { setup: ['pnpm db:migrate'] } })
+      ).pipe(Effect.flip)
+      expect(setup.message).toContain('"provision.setup"')
 
-      const preferred = yield* parseRepoConfig(
-        packageJson({
-          provision: { setup: ['pnpm migrate'] },
-          worktree: { setup: ['pnpm db:migrate'] }
-        })
-      )
-      expect(preferred.setup).toEqual(['pnpm migrate'])
+      const appDir = yield* parseRepoConfig(
+        packageJson({ provisionEnv: { appDir: 'apps/web' } })
+      ).pipe(Effect.flip)
+      expect(appDir.message).toContain('"provision.appDir"')
     })
   )
 

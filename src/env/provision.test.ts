@@ -224,14 +224,14 @@ describe('provision env', () => {
     })
   )
 
-  it.live('runs legacy worktree.setup commands during the transition', () =>
+  it.live('fails before any mutation on legacy package.json keys', () =>
     Effect.gen(function* () {
       const env = yield* fixture({ packageJson: { worktree: { setup: ['pnpm db:migrate'] } } })
 
-      yield* env.run('--repo', env.worktree, '--non-interactive', '--skip-install')
+      yield* env.run('--repo', env.worktree, '--non-interactive')
 
-      expect(process.exitCode).toBeUndefined()
-      expect(setupCommands(env.invocations)).toEqual(['pnpm db:migrate'])
+      expect(process.exitCode).toBe(2)
+      expect(env.invocations).toEqual([])
     })
   )
 

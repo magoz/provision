@@ -91,7 +91,8 @@ Repositories declare their needs in the root `package.json`. Everything is optio
 }
 ```
 
-Unknown keys are rejected. `setup` commands run from the checkout root through `$SHELL -lc`; keep
+Unknown keys are rejected, and so are the former `worktree.setup` and `provisionEnv` keys (the error
+names their replacement). `setup` commands run from the checkout root through `$SHELL -lc`; keep
 them idempotent (migrations, not seeds), since `provision env` reruns them on every run. A common
 setup migrates both databases while ignoring any inherited `DATABASE_URL`:
 
@@ -488,7 +489,7 @@ passphrase read from the terminal: an agent that hides its variables still canno
 ```json
 {
   "contractVersion": 1,
-  "provisionVersion": "0.3.1",
+  "provisionVersion": "0.4.0",
   "commands": ["contract", "config", "factory", "env", "db"]
 }
 ```
