@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Option } from 'effect'
+import { Console, Effect, Layer, Option } from 'effect'
 import { Command } from 'effect/cli'
 import { fakeNeon } from '../testing/fake-neon.ts'
 import { dbTestLayer, temporaryDirectory } from '../testing/temporary.ts'
@@ -34,10 +34,26 @@ const setup = (packageJson: Record<string, unknown>, projectName = 'repo-dev') =
     const layer = Layer.mergeAll(dbTestLayer({ configHome, stateHome }), neon.layer)
     const run = (...args: ReadonlyArray<string>) =>
       Command.runWith(dbCommand, { version: 'test' })(args).pipe(Effect.provide(layer))
+    /** Runs and returns what the command printed (its `--json` report). */
+    const output = (...args: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const lines: Array<string> = []
+        const console = yield* Console.Console
+        yield* run(...args).pipe(
+          Effect.provideService(Console.Console, {
+            ...console,
+            log: (...values: ReadonlyArray<unknown>) => {
+              lines.push(values.map(String).join(' '))
+            }
+          })
+        )
+
+        return lines.join('\n')
+      })
     const envFile = () => Effect.promise(() => readFile(join(repo, '.env.local'), 'utf8'))
     const lease = readLease(repo).pipe(Effect.provide(layer))
 
-    return { repo, neon, run, envFile, lease }
+    return { repo, neon, run, output, envFile, lease }
   })
 
 afterEach(() => {
@@ -99,6 +115,22 @@ describe('provision db', () => {
 
       expect(process.exitCode).toBe(2)
       expect(neon.calls).not.toContain('POST /branches')
+    })
+  )
+
+  it.live('reports release eligibility in status, as the worktree tool requires', () =>
+    Effect.gen(function* () {
+      const { repo, output, run } = yield* setup({})
+      yield* run('create', '--worktree', repo, '--label', 'feature', '--json')
+
+      const live = JSON.parse(yield* output('status', '--worktree', repo, '--json'))
+      expect(live).toMatchObject({ status: 'live', lease: 'default', releasable: true })
+      expect(process.exitCode).toBeUndefined()
+
+      yield* run('release', '--worktree', repo, '--json')
+      const none = JSON.parse(yield* output('status', '--worktree', repo, '--json'))
+      expect(none).toEqual({ status: 'none', lease: 'default', worktree: repo })
+      expect(process.exitCode).toBe(1)
     })
   )
 })

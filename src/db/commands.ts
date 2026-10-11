@@ -13,7 +13,7 @@ import {
   storeSecret,
   writeSettings
 } from './credentials.ts'
-import { ConfigurationError, PolicyError, type Lease } from './domain.ts'
+import { BRANCH_PREFIX, ConfigurationError, PolicyError, type Lease } from './domain.ts'
 import {
   allLeases,
   expiredBeyondGrace,
@@ -320,6 +320,14 @@ const status = Command.make(
 
         yield* report(json, {
           status: Option.isSome(branch) ? 'live' : 'missing',
+          // Read-only release eligibility, so callers can check every lease before deleting any.
+          // `release` repeats its own guardrails.
+          releasable:
+            lease.value.branchName.startsWith(BRANCH_PREFIX) &&
+            Option.match(branch, {
+              onNone: () => true,
+              onSome: value => value.default !== true && value.protected !== true
+            }),
           lease: lease.value.leaseName,
           branch_name: lease.value.branchName,
           branch_id: lease.value.branchId,
