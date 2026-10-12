@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { Console, Effect, Option, Redacted, Schema } from 'effect'
 import { readPrivately } from '../../shared/private-file.ts'
+import { ensureLinkIgnored, writeProjectLink } from '../../shared/vercel-link.ts'
 import {
   decide,
   envGroups,
@@ -14,7 +15,6 @@ import {
 import {
   createCustomEnvironment,
   createProject,
-  linkCheckout,
   linkedRepository,
   listEnvRecords,
   setRootDirectory
@@ -33,6 +33,10 @@ const LinkedProject = Schema.fromJsonString(Schema.Struct({ projectId: Schema.St
 export const vercelStep = (context: FactoryContext) =>
   Effect.gen(function* () {
     const teamId = context.credentials.vercel.teamId
+    // Before any mutation, so a dry run reports a checkout the link cannot be written to.
+    yield* ensureLinkIgnored(context.appDirectory).pipe(
+      Effect.mapError(error => factoryError(error.message))
+    )
     const found = yield* findProject(context)
 
     let handle: Option.Option<ProjectHandle> = found
@@ -121,7 +125,11 @@ export const vercelStep = (context: FactoryContext) =>
       yield* mutate(
         context,
         `link ${context.appDirectory} to ${context.names.project}`,
-        linkCheckout(teamId, context.appDirectory, context.names.project)
+        writeProjectLink(context.appDirectory, {
+          projectId: project.project.id,
+          orgId: teamId,
+          projectName: project.project.name
+        }).pipe(Effect.mapError(error => factoryError(error.message)))
       )
     }
   })

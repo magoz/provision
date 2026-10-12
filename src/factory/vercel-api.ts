@@ -1,5 +1,5 @@
 import { Effect, Option, Predicate, Redacted, Schema } from 'effect'
-import { capture, inherit } from '../shared/process.ts'
+import { capture } from '../shared/process.ts'
 import { ProviderError } from './http.ts'
 
 /**
@@ -332,17 +332,3 @@ export const addProjectDomain = (teamId: string, projectId: string, domain: stri
     Effect.flatMap(value => required('domain creation', value)),
     Effect.flatMap(value => decode('domain creation', ProjectDomain, value))
   )
-
-/** Links an app directory to the project (writes `.vercel/project.json`). */
-export const linkCheckout = (teamId: string, directory: string, project: string) =>
-  inherit('vercel', [
-    'link',
-    '--cwd',
-    directory,
-    '--project',
-    project,
-    '--scope',
-    teamId,
-    '--yes',
-    '--no-color'
-  ]).pipe(Effect.mapError(error => new ProviderError({ message: error.message })))
