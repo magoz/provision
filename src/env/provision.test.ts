@@ -40,6 +40,12 @@ const vercelScript = (invocation: Invocation) => {
 
   if (verb === 'env' && action === 'list') return { stdout: '  API_URL   Encrypted\n' }
 
+  if (verb === 'api') {
+    return action === '/v9/projects/acme-web'
+      ? { stdout: JSON.stringify({ id: 'prj_web', accountId: 'team_1', name: 'acme-web' }) }
+      : { exitCode: 1, stderr: 'Error: Project not found (404)\n' }
+  }
+
   if (verb === 'env' && action === 'pull') {
     const file = invocation.args[2] ?? ''
     const environment = invocation.args[invocation.args.indexOf('--environment') + 1] ?? ''
@@ -191,6 +197,82 @@ describe('provision env', () => {
 
       expect(process.exitCode).toBe(3)
       expect(env.invocations).toEqual([])
+    })
+  )
+
+  it.live('links --vercel-project by writing only the identity, never running vercel link', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({ linkPrimary: false })
+
+      yield* env.run(
+        '--repo',
+        env.worktree,
+        '--vercel-project',
+        'acme-web',
+        '--non-interactive',
+        '--skip-install',
+        '--skip-setup'
+      )
+
+      expect(process.exitCode).toBeUndefined()
+      expect(JSON.parse((yield* env.read('.vercel/project.json')) ?? '{}')).toEqual({
+        projectId: 'prj_web',
+        orgId: 'team_1',
+        projectName: 'acme-web'
+      })
+      expect(env.invocations[0]?.args.slice(0, 2)).toEqual(['api', '/v9/projects/acme-web'])
+      expect(env.invocations.some(invocation => invocation.args[0] === 'link')).toBe(false)
+      expect(yield* env.read('.gitignore')).toBe('.env.local\n.env.test\n.vercel\n')
+    })
+  )
+
+  it.live('links --vercel-project in an app subdirectory and rolls the link back on failure', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({
+        appDir: 'apps/web',
+        packageJson: { provision: { appDir: 'apps/web' } },
+        linkPrimary: false,
+        neon: { failCreation: 2 }
+      })
+
+      yield* env.run(
+        '--repo',
+        env.worktree,
+        '--vercel-project',
+        'acme-web',
+        '--database',
+        '--non-interactive',
+        '--skip-install'
+      )
+
+      expect(process.exitCode).toBe(2)
+      const lookup = env.invocations.find(invocation => invocation.args[0] === 'api')
+      expect(lookup?.args.at(-1)).toBe(join(env.worktree, 'apps/web'))
+      // The link existed (env pulls ran after it) and the failed allocation removed it again.
+      expect(env.invocations.some(invocation => invocation.args[1] === 'pull')).toBe(true)
+      expect(yield* env.read('.vercel/project.json')).toBeUndefined()
+      expect(yield* Effect.promise(() => readFile(join(env.worktree, '.gitignore'), 'utf8'))).toBe(
+        '.env.local\n.env.test\n.vercel\n'
+      )
+    })
+  )
+
+  it.live('fails without linking when --vercel-project is not in the current scope', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({ linkPrimary: false })
+
+      yield* env.run(
+        '--repo',
+        env.worktree,
+        '--vercel-project',
+        'missing-web',
+        '--non-interactive',
+        '--skip-install',
+        '--skip-setup'
+      )
+
+      expect(process.exitCode).toBe(2)
+      expect(yield* env.read('.vercel/project.json')).toBeUndefined()
     })
   )
 

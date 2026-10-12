@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
+import { access, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Option } from 'effect'
@@ -56,7 +56,7 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
         'origin',
         `git@github.com:${owner}/acme-app.git`
       ])
-      await writeFile(join(repo, '.gitignore'), '.vercel\n.env*\n')
+      await writeFile(join(repo, '.gitignore'), '.vercel\n.env*.local\n')
       await writeFile(join(repo, 'package.json'), JSON.stringify({ name: 'acme-app' }))
       await writeFile(
         registry,
@@ -228,7 +228,27 @@ describe('provision factory', () => {
       const link = yield* Effect.promise(() =>
         readFile(join(repo, '.vercel', 'project.json'), 'utf8')
       )
-      expect(link).toContain(project?.id ?? 'missing')
+      expect(JSON.parse(link)).toEqual({
+        projectId: project?.id ?? 'missing',
+        orgId: 'team_acme',
+        projectName: 'acme-app'
+      })
+      const linkMode = yield* Effect.promise(() => stat(join(repo, '.vercel', 'project.json')))
+      expect(linkMode.mode & 0o777).toBe(0o600)
+
+      // Linking writes only the identity: `vercel link` would pull `.env.local` and edit .gitignore.
+      expect(invocations.some(invocation => invocation.args[0] === 'link')).toBe(false)
+      expect(yield* Effect.promise(() => readFile(join(repo, '.gitignore'), 'utf8'))).toBe(
+        '.vercel\n.env*.local\n'
+      )
+      expect(
+        yield* Effect.promise(() =>
+          access(join(repo, '.env.local')).then(
+            () => true,
+            () => false
+          )
+        )
+      ).toBe(false)
 
       // Selection by the recorded owner reads only this factory's item.
       const vaults = invocations
@@ -255,14 +275,18 @@ describe('provision factory', () => {
 
   it.live('changes nothing when rerun with reuse', () =>
     Effect.gen(function* () {
-      const { world, run } = yield* setup()
+      const { repo, world, run } = yield* setup()
       yield* run('--on-existing', 'abort', ...secretFlags)
       const before = world.mutations.length
+      const linkFile = join(repo, '.vercel', 'project.json')
+      const linked = yield* Effect.promise(() => stat(linkFile))
 
       yield* run('--on-existing', 'reuse', ...secretFlags)
 
       expect(process.exitCode).toBeUndefined()
       expect(world.mutations.slice(before)).toEqual([])
+      // An atomic rewrite would replace the inode; a matching link is left alone.
+      expect((yield* Effect.promise(() => stat(linkFile))).ino).toBe(linked.ino)
     })
   )
 
@@ -569,6 +593,18 @@ describe('provision factory', () => {
       yield* run('--dry-run')
 
       expect(process.exitCode).toBeUndefined()
+      expect(world.mutations).toEqual([])
+    })
+  )
+
+  it.live('refuses, even in a dry run, a checkout whose .vercel is not git-ignored', () =>
+    Effect.gen(function* () {
+      const { repo, world, run } = yield* setup()
+      yield* Effect.promise(() => writeFile(join(repo, '.gitignore'), '.env*.local\n'))
+
+      yield* run('--only', 'vercel', '--dry-run')
+
+      expect(process.exitCode).toBe(2)
       expect(world.mutations).toEqual([])
     })
   )

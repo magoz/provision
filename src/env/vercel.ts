@@ -1,6 +1,7 @@
 import { Console, Effect, FileSystem, Option, Path, Schema } from 'effect'
 import { gitOutput, gitSucceeds } from '../shared/git.ts'
 import { capture, inherit } from '../shared/process.ts'
+import { ensureLinkIgnored, writeProjectLink } from '../shared/vercel-link.ts'
 import { fail, VercelLinkRequired } from './domain.ts'
 import {
   ensureLocalDirectory,
@@ -13,6 +14,38 @@ import {
 const VercelProjectIdentity = Schema.fromJsonString(
   Schema.Struct({ orgId: Schema.String, projectId: Schema.String })
 )
+
+const VercelProject = Schema.fromJsonString(
+  Schema.Struct({ id: Schema.String, accountId: Schema.String, name: Schema.String })
+)
+
+/** A project in the Vercel CLI's current scope, by name or id (what `vercel link --project` took). */
+const lookupProject = (directory: string, nameOrId: string) =>
+  Effect.gen(function* () {
+    const result = yield* capture('vercel', [
+      'api',
+      `/v9/projects/${encodeURIComponent(nameOrId)}`,
+      '--raw',
+      '--non-interactive',
+      '--no-color',
+      '--cwd',
+      directory
+    ]).pipe(Effect.mapError(() => fail('Vercel CLI (vercel) could not be started')))
+
+    if (result.exitCode !== 0) {
+      return yield* fail(
+        /\(\s*404\s*\)\s*$/u.test(result.stderr.trim())
+          ? `Vercel project ${nameOrId} was not found in the Vercel CLI's current scope`
+          : `Vercel project lookup for ${nameOrId} failed; Vercel response suppressed`
+      )
+    }
+
+    return yield* Schema.decodeUnknownEffect(VercelProject)(result.stdout).pipe(
+      Effect.mapError(() =>
+        fail(`Vercel project lookup for ${nameOrId} returned an unexpected shape`)
+      )
+    )
+  })
 
 /** `orgId:projectId` from a `.vercel/project.json`, which must be a regular local file. */
 export const readVercelIdentity = (projectFile: string) =>
@@ -153,27 +186,17 @@ export const ensureVercelLink = (request: LinkRequest) =>
     }
 
     if (request.vercelProject !== undefined) {
-      if (
-        !(yield* gitSucceeds(request.directory, [
-          'check-ignore',
-          '-q',
-          '--',
-          '.vercel/project.json'
-        ]))
-      ) {
-        return yield* fail('.vercel must be git-ignored before linking')
-      }
+      yield* ensureLinkIgnored(request.directory).pipe(
+        Effect.mapError(() => fail('.vercel must be git-ignored before linking'))
+      )
+      const project = yield* lookupProject(request.directory, request.vercelProject)
 
-      yield* Console.log(`provision env: linking to Vercel project ${request.vercelProject}`)
-      yield* inherit('vercel', [
-        'link',
-        '--cwd',
-        request.directory,
-        '--project',
-        request.vercelProject,
-        '--yes',
-        '--no-color'
-      ]).pipe(Effect.mapError(error => fail(error.message)))
+      yield* Console.log(`provision env: linking to Vercel project ${project.name}`)
+      yield* writeProjectLink(request.directory, {
+        projectId: project.id,
+        orgId: project.accountId,
+        projectName: project.name
+      }).pipe(Effect.mapError(error => fail(error.message)))
 
       return true
     }

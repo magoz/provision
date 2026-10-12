@@ -235,7 +235,7 @@ checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Ver
 
 | Step      | Creates                                                                                                                                                 | Vercel env vars                                                         |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link                                                                 | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                              |
+| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link (`.vercel/project.json` only; `.vercel` must be git-ignored)    | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                              |
 | `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production)    |
 | `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                             | `R2_*`                                                                  |
 | `upstash` | `<repo>-dev`/`-prod` teams                                                                                                                              | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups)) |
@@ -379,7 +379,10 @@ Under a per-checkout lock, it:
 2. resolves existing env files (`--env-conflict`; default: refresh from Vercel);
 3. installs dependencies from the root lockfile (pnpm, bun, npm, or yarn; frozen);
 4. reuses or creates the app's Vercel link (existing link, `--source`, `--vercel-project`, or the
-   single project shared by linked sibling worktrees);
+   single project shared by linked sibling worktrees; `--vercel-project` must name a project in the
+   Vercel CLI's current scope). Links are written as `.vercel/project.json`
+   directly, never with `vercel link`, which would also pull `.env.local` and append `.env*` to
+   `.gitignore`;
 5. pulls Vercel Development into `.env.local` and `test` into `.env.test` (mode `0600`), dropping
    deployment-only metadata, `ALLOW_E2E_DATABASE_RESET` from `.env.local`, and, with `--database`,
    Vercel's database URLs;
@@ -517,6 +520,7 @@ Check `commands` for the capabilities you need.
 | `… already exists and prompting is unavailable; pass --on-existing` | run in a terminal, or choose `--on-existing reuse`                                                          |
 | `systemd-creds is unavailable`                                      | use `op signin` or `OP_SERVICE_ACCOUNT_TOKEN` instead of a stored token                                     |
 | `env` exits 3                                                       | pass `--source <linked checkout>` or `--vercel-project <name>`                                              |
+| `….vercel/project.json is not git-ignored`                          | add `.vercel` to the app's `.gitignore`, then rerun                                                         |
 | exit 4 `approval_required` in your own terminal                     | the shell inherited an agent's variables (for example started from an agent session); open a fresh terminal |
 
 ## Development

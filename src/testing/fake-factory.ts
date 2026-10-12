@@ -1,5 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { Effect, Layer, Predicate } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import type { Invocation, ScriptResult } from './scripted-process.ts'
@@ -215,21 +213,6 @@ export const factoryScript =
   (invocation: Invocation): Effect.Effect<ScriptResult | undefined> | ScriptResult | undefined => {
     if (invocation.command === 'vercel' && invocation.args[0] === 'api') {
       return vercelApi(world, invocation)
-    }
-
-    if (invocation.command === 'vercel' && invocation.args[0] === 'link') {
-      const directory = invocation.args[invocation.args.indexOf('--cwd') + 1] ?? ''
-      const name = invocation.args[invocation.args.indexOf('--project') + 1] ?? ''
-      const project = [...world.vercel.projects.values()].find(candidate => candidate.name === name)
-      world.mutations.push(`vercel link ${name}`)
-
-      return Effect.promise(async () => {
-        await mkdir(join(directory, '.vercel'), { recursive: true })
-        await writeFile(
-          join(directory, '.vercel', 'project.json'),
-          JSON.stringify({ projectId: project?.id ?? '', orgId: 'team_fake' })
-        )
-      }).pipe(Effect.as(undefined))
     }
 
     return { exitCode: 127 }

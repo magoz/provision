@@ -60,7 +60,8 @@ env files keep whatever database Vercel provides; prefer `--database` for anythi
 
 - **Exit 3** (`{"status":"vercel_link_required",…}` on stderr): the app is not linked and the
   project is ambiguous. Rerun with `--source <already-linked checkout>` or
-  `--vercel-project <name>`; ask the human which project if you cannot tell.
+  `--vercel-project <name>` (a project in the Vercel CLI's current scope, see `vercel switch`);
+  ask the human which project if you cannot tell.
 - **Setup failed**: env files and databases are kept. Fix the cause, then rerun the same command;
   it resumes. `--skip-setup` skips setup on purpose.
 - **Existing env files**: refreshed from Vercel by default. `--env-conflict preserve` keeps them.
@@ -117,7 +118,9 @@ Release both leases before deleting a worktree. Branches expire on their own aft
 ## Provision a new project (human runs it)
 
 Prerequisites: the GitHub repository exists under the factory's GitHub owner, there is a local
-checkout with that `origin`, and the factory is registered (`provision config list`).
+checkout with that `origin` whose `.gitignore` ignores `.vercel` (the `vercel` step writes
+`.vercel/project.json` itself and refuses otherwise), and the factory is registered
+(`provision config list`).
 
 ### First, work out what the repository needs
 
