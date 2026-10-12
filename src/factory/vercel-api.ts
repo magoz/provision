@@ -300,7 +300,7 @@ export const deleteEnvRecord = (teamId: string, projectId: string, recordId: str
   ).pipe(Effect.asVoid)
 
 // ---------------------------------------------------------------------------
-// domains and checkout link
+// domains
 // ---------------------------------------------------------------------------
 
 const ProjectDomain = Schema.Struct({

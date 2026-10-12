@@ -226,6 +226,37 @@ describe('provision env', () => {
     })
   )
 
+  it.live('links --vercel-project in an app subdirectory and rolls the link back on failure', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({
+        appDir: 'apps/web',
+        packageJson: { provision: { appDir: 'apps/web' } },
+        linkPrimary: false,
+        neon: { failCreation: 2 }
+      })
+
+      yield* env.run(
+        '--repo',
+        env.worktree,
+        '--vercel-project',
+        'acme-web',
+        '--database',
+        '--non-interactive',
+        '--skip-install'
+      )
+
+      expect(process.exitCode).toBe(2)
+      const lookup = env.invocations.find(invocation => invocation.args[0] === 'api')
+      expect(lookup?.args.at(-1)).toBe(join(env.worktree, 'apps/web'))
+      // The link existed (env pulls ran after it) and the failed allocation removed it again.
+      expect(env.invocations.some(invocation => invocation.args[1] === 'pull')).toBe(true)
+      expect(yield* env.read('.vercel/project.json')).toBeUndefined()
+      expect(yield* Effect.promise(() => readFile(join(env.worktree, '.gitignore'), 'utf8'))).toBe(
+        '.env.local\n.env.test\n.vercel\n'
+      )
+    })
+  )
+
   it.live('fails without linking when --vercel-project is not in the current scope', () =>
     Effect.gen(function* () {
       const env = yield* fixture({ linkPrimary: false })

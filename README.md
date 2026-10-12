@@ -379,7 +379,8 @@ Under a per-checkout lock, it:
 2. resolves existing env files (`--env-conflict`; default: refresh from Vercel);
 3. installs dependencies from the root lockfile (pnpm, bun, npm, or yarn; frozen);
 4. reuses or creates the app's Vercel link (existing link, `--source`, `--vercel-project`, or the
-   single project shared by linked sibling worktrees). Links are written as `.vercel/project.json`
+   single project shared by linked sibling worktrees; `--vercel-project` must name a project in the
+   Vercel CLI's current scope). Links are written as `.vercel/project.json`
    directly, never with `vercel link`, which would also pull `.env.local` and append `.env*` to
    `.gitignore`;
 5. pulls Vercel Development into `.env.local` and `test` into `.env.test` (mode `0600`), dropping

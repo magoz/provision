@@ -275,14 +275,18 @@ describe('provision factory', () => {
 
   it.live('changes nothing when rerun with reuse', () =>
     Effect.gen(function* () {
-      const { world, run } = yield* setup()
+      const { repo, world, run } = yield* setup()
       yield* run('--on-existing', 'abort', ...secretFlags)
       const before = world.mutations.length
+      const linkFile = join(repo, '.vercel', 'project.json')
+      const linked = yield* Effect.promise(() => stat(linkFile))
 
       yield* run('--on-existing', 'reuse', ...secretFlags)
 
       expect(process.exitCode).toBeUndefined()
       expect(world.mutations.slice(before)).toEqual([])
+      // An atomic rewrite would replace the inode; a matching link is left alone.
+      expect((yield* Effect.promise(() => stat(linkFile))).ino).toBe(linked.ino)
     })
   )
 

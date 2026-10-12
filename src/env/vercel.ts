@@ -20,14 +20,16 @@ const VercelProject = Schema.fromJsonString(
 )
 
 /** A project in the Vercel CLI's current scope, by name or id (what `vercel link --project` took). */
-const lookupProject = (nameOrId: string) =>
+const lookupProject = (directory: string, nameOrId: string) =>
   Effect.gen(function* () {
     const result = yield* capture('vercel', [
       'api',
       `/v9/projects/${encodeURIComponent(nameOrId)}`,
       '--raw',
       '--non-interactive',
-      '--no-color'
+      '--no-color',
+      '--cwd',
+      directory
     ]).pipe(Effect.mapError(() => fail('Vercel CLI (vercel) could not be started')))
 
     if (result.exitCode !== 0) {
@@ -187,7 +189,7 @@ export const ensureVercelLink = (request: LinkRequest) =>
       yield* ensureLinkIgnored(request.directory).pipe(
         Effect.mapError(() => fail('.vercel must be git-ignored before linking'))
       )
-      const project = yield* lookupProject(request.vercelProject)
+      const project = yield* lookupProject(request.directory, request.vercelProject)
 
       yield* Console.log(`provision env: linking to Vercel project ${project.name}`)
       yield* writeProjectLink(request.directory, {
