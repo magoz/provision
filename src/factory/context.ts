@@ -1,4 +1,4 @@
-import { Console, Data, Effect, Option, Semaphore, type Redacted } from 'effect'
+import { Console, Data, Effect, Option, Ref, Semaphore, type Redacted } from 'effect'
 import { Prompt } from 'effect/cli'
 import type { RepoConfig } from '../shared/repo-config.ts'
 import type { FactoryCredentials } from './onepassword.ts'
@@ -55,6 +55,8 @@ export interface FactoryContext {
   readonly secrets: ReadonlyArray<SecretSpec>
   readonly dryRun: boolean
   readonly onExisting: OnExisting
+  /** Keys this run wrote to Development or `test`: what local env files pull. */
+  readonly localEnvKeys: Ref.Ref<ReadonlySet<string>>
   readonly names: {
     readonly project: string
     readonly development: string
@@ -295,6 +297,13 @@ export const writeGroup = (
           target: group.target,
           customEnvironmentIds: group.customEnvironmentIds
         })
+      }
+
+      if (group.target.includes('development') || group.customEnvironmentIds.length > 0) {
+        yield* Ref.update(
+          context.localEnvKeys,
+          keys => new Set([...keys, ...entries.map(entry => entry.key)])
+        )
       }
     })
   )

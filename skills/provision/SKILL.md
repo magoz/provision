@@ -135,17 +135,17 @@ Don't assume a template: read the code, then compare with Vercel.
    human asks to rotate.
 3. **Sort each missing variable:**
 
-   | The code reads…                                                        | Comes from                                                                                                                               |
-   | ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-   | `DATABASE_URL*` (Neon)                                                 | `neon` step (Production); Preview databases come from Neon's Vercel integration, connected once by the human (relay the `manual:` lines) |
-   | `R2_*` (S3-compatible storage)                                         | `r2` step (needs `--domain` for the upload origin)                                                                                       |
-   | `QSTASH_*`                                                             | `upstash` step (the human pastes the console's `.env` block)                                                                             |
-   | `RESEND_API_KEY`                                                       | `resend` step                                                                                                                            |
-   | `AUTH_EMAIL_FROM`                                                      | `--email-from` (domain verified in the factory's Resend)                                                                                 |
-   | `REPORT_RECEIVER_*`                                                    | `reports` step (factories with a receiver)                                                                                               |
-   | a random secret the app generates itself (auth, cron, encryption keys) | `--secret NAME[=FORMAT]`                                                                                                                 |
-   | a third-party key (AI Gateway, OAuth apps, data APIs)                  | the human, with `vercel env add`                                                                                                         |
-   | plain config (URLs, limits, flags)                                     | you, with `vercel env add … --value … --yes`                                                                                             |
+   | The code reads…                                                        | Comes from                                                                                                                                                                             |
+   | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | `DATABASE_URL*` (Neon)                                                 | `neon` step (Production); Preview databases come from Neon's Vercel integration, connected once by the human (the step waits for them to confirm; otherwise relay the `manual:` lines) |
+   | `R2_*` (S3-compatible storage)                                         | `r2` step (needs `--domain` for the upload origin)                                                                                                                                     |
+   | `QSTASH_*`                                                             | `upstash` step (the human pastes the console's `.env` block)                                                                                                                           |
+   | `RESEND_API_KEY`                                                       | `resend` step                                                                                                                                                                          |
+   | `AUTH_EMAIL_FROM`                                                      | `--email-from` (domain verified in the factory's Resend)                                                                                                                               |
+   | `REPORT_RECEIVER_*`                                                    | `reports` step (factories with a receiver)                                                                                                                                             |
+   | a random secret the app generates itself (auth, cron, encryption keys) | `--secret NAME[=FORMAT]`                                                                                                                                                               |
+   | a third-party key (AI Gateway, OAuth apps, data APIs)                  | the human, with `vercel env add`                                                                                                                                                       |
+   | plain config (URLs, limits, flags)                                     | you, with `vercel env add … --value … --yes`                                                                                                                                           |
 
    `--secret` formats: `NAME` (32 random bytes, base64), `NAME=base64-<bytes>`,
    `NAME=hex-<bytes>`, `NAME=vapid` (web-push pair: `NAME_PUBLIC_KEY` + `NAME_PRIVATE_KEY`).
@@ -181,7 +181,8 @@ third-party keys and plain settings from step 3 still need `vercel env add`.
 
 Reading the output: each step prints one block. `would …` is a dry-run plan, `exists:` /
 `reusing …` means nothing changed, `skipped:` means the factory lacks that provider, and
-`manual: …` is a follow-up the human must do by hand. Relay `manual:` lines to the human.
+`manual: …` is a follow-up the human must do by hand. Relay `manual:` lines to the human. A final
+`next:` line (only when Development or `test` variables changed) is the local command to run.
 
 QStash credentials are pasted by the human when `provision factory` asks for them (hidden input,
 written straight to Vercel). If they skipped it, give them

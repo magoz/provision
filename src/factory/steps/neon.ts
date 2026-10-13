@@ -8,6 +8,7 @@ import {
   mutate,
   requireProject,
   writeGroup,
+  withTerminal,
   type FactoryContext,
   type ProjectHandle
 } from '../context.ts'
@@ -25,6 +26,7 @@ import {
   revokeApiKey,
   type NeonAdmin
 } from '../providers/neon.ts'
+import { ManualStep } from '../manual-step.ts'
 import { ensureScopedKey } from '../scoped-key.ts'
 import {
   deleteEnvRecord,
@@ -103,8 +105,10 @@ const outsidePreview = (record: EnvRecord) =>
  * Preview deployments get their own database from Neon's Vercel integration (one branch per git
  * branch, copied from `<repo>-dev`): only that integration can hand a database to a deployment
  * before it builds. It also writes Production and Development variables pointing at `<repo>-dev`;
- * those are removed (Production gets `<repo>-prod` back). Not connected yet: prints how.
- * Connected means the team's Neon integration has access to this Vercel project.
+ * those are removed (Production gets `<repo>-prod` back). Not connected yet: shows how, waits for
+ * the operator to connect it and checks again; skipped (or no terminal), it prints how to finish.
+ * Connected means the team's Neon integration has access to this Vercel project. Returns the
+ * project's records as they stand afterwards.
  */
 const previewIntegration = (
   context: FactoryContext,
@@ -116,40 +120,95 @@ const previewIntegration = (
   Effect.gen(function* () {
     const teamId = context.credentials.vercel.teamId
     const projectId = handle.project.id
-    const configurations = yield* listIntegrationConfigurations(teamId, 'neon')
-    const configurationIds = new Set(configurations.map(configuration => configuration.id))
-    const connected = configurations.some(
-      configuration =>
-        configuration.projects === undefined ||
-        configuration.projects === null ||
-        configuration.projects.includes(projectId)
-    )
+    const manual = yield* ManualStep
+    let current = records
+    let configurations = yield* listIntegrationConfigurations(teamId, 'neon')
+    let problem = ''
 
-    if (connected) {
-      const owned = records.filter(
-        record =>
-          typeof record.configurationId === 'string' &&
-          configurationIds.has(record.configurationId) &&
-          databaseKey.test(record.key) &&
-          outsidePreview(record)
-      )
+    while (!isConnected(configurations, projectId)) {
+      const steps = yield* connectSteps(context, admin, handle, current, sandbox)
+      const intro = `connect Neon's Vercel integration so each Preview branch gets its own database (preview/<git-branch>, copied from ${context.names.development}):`
+      const confirmed = context.dryRun
+        ? false
+        : yield* manual
+            .confirm(
+              [`${problem}Neon for ${context.names.project}: ${intro}`, ...numbered(steps)].join(
+                '\n'
+              ),
+              `Connected? Yes checks again and continues; No leaves it for a rerun`
+            )
+            .pipe(
+              withTerminal,
+              Effect.mapError(error => factoryError(error.message))
+            )
 
-      if (owned.length > 0) {
-        const keys = [...new Set(owned.map(record => record.key))].join(', ')
-        const targets = [...new Set(owned.flatMap(recordTargets))].join(', ')
-
-        yield* mutate(
-          context,
-          `remove the Neon integration's ${keys} from Vercel (${targets})`,
-          Effect.forEach(owned, record => deleteEnvRecord(teamId, projectId, record.id), {
-            discard: true
-          })
+      if (!confirmed) {
+        yield* Console.log(
+          [
+            `  manual: ${intro}`,
+            ...numbered([
+              ...steps,
+              `rerun: provision factory --checkout ${context.checkout.root} --only neon --on-existing reuse (Production goes back to ${context.names.production}, Development is cleared)`
+            ])
+          ].join('\n')
         )
+
+        return { connected: false, records: current }
       }
 
-      return { connected: true, removed: owned.map(record => record.id) }
+      configurations = yield* listIntegrationConfigurations(teamId, 'neon')
+      current = yield* listEnvRecords(teamId, projectId)
+      problem = `Neon's Vercel integration still has no access to ${handle.project.name}.\n`
     }
 
+    const configurationIds = new Set(configurations.map(configuration => configuration.id))
+    const owned = current.filter(
+      record =>
+        typeof record.configurationId === 'string' &&
+        configurationIds.has(record.configurationId) &&
+        databaseKey.test(record.key) &&
+        outsidePreview(record)
+    )
+
+    if (owned.length > 0) {
+      const keys = [...new Set(owned.map(record => record.key))].join(', ')
+      const targets = [...new Set(owned.flatMap(recordTargets))].join(', ')
+
+      yield* mutate(
+        context,
+        `remove the Neon integration's ${keys} from Vercel (${targets})`,
+        Effect.forEach(owned, record => deleteEnvRecord(teamId, projectId, record.id), {
+          discard: true
+        })
+      )
+    }
+
+    return { connected: true, records: current.filter(record => !owned.includes(record)) }
+  })
+
+const numbered = (lines: ReadonlyArray<string>) =>
+  lines.map((line, index) => `    ${index + 1}. ${line}`)
+
+const isConnected = (
+  configurations: ReadonlyArray<{ readonly projects?: ReadonlyArray<string> | null | undefined }>,
+  projectId: string
+) =>
+  configurations.some(
+    configuration =>
+      configuration.projects === undefined ||
+      configuration.projects === null ||
+      configuration.projects.includes(projectId)
+  )
+
+/** How to connect the integration; lists the variables that would make it refuse first. */
+const connectSteps = (
+  context: FactoryContext,
+  admin: NeonAdmin,
+  handle: ProjectHandle,
+  records: ReadonlyArray<EnvRecord>,
+  sandbox: Option.Option<{ readonly projectId: string; readonly parentBranch: string | undefined }>
+) =>
+  Effect.gen(function* () {
     const development = context.names.development
     const project = handle.project.name
     const databases =
@@ -172,27 +231,15 @@ const previewIntegration = (
           )
       )
     ]
-    const steps = [
+    return [
       `Vercel → team → Integrations → Neon → Manage Access: add project ${project} (no Neon? Marketplace → Neon → Link Existing Neon Account)`,
       ...(blocking.length === 0
         ? []
         : [
             `remove these first (the integration refuses to connect while they exist; running deployments keep theirs): cd ${context.appDirectory} && ${blocking.map(entry => `vercel env rm ${entry} --yes`).join(' && ')}`
           ]),
-      `Neon → project ${development} → Integrations → Vercel → connect ${connection}, Vercel project ${project}. After a failed attempt, delete the vercel-dev branch it leaves in ${development} before retrying`,
-      `rerun: provision factory --checkout ${context.checkout.root} --only neon (Production goes back to ${context.names.production}, Development is cleared)`
+      `Neon → project ${development} → Integrations → Vercel → connect ${connection}, Vercel project ${project}. After a failed attempt, delete the vercel-dev branch it leaves in ${development} before retrying`
     ]
-
-    yield* Console.log(
-      [
-        `  manual: connect Neon's Vercel integration so each Preview branch gets its own database (preview/<git-branch>, copied from ${development}):`,
-        ...steps.map((step, index) => `    ${index + 1}. ${step}`)
-      ].join('\n')
-    )
-
-    const removed: ReadonlyArray<string> = []
-
-    return { connected: false, removed }
   })
 
 /**
@@ -283,7 +330,7 @@ export const neonStep = (context: FactoryContext) =>
 
     // Preview databases ---------------------------------------------------------
     const previews = yield* previewIntegration(context, admin, handle.value, records, sandbox)
-    const remaining = records.filter(record => !previews.removed.includes(record.id))
+    const remaining = previews.records
 
     // Production ---------------------------------------------------------------
     const production = yield* ensureProject(

@@ -9,6 +9,7 @@ import { DbEnvironmentLive } from './db/environment.ts'
 import { envCommand } from './env/commands.ts'
 import { factoryCommand } from './factory/commands.ts'
 import { configCommand } from './factory/config-commands.ts'
+import { ManualStepLive } from './factory/manual-step.ts'
 import { PassphraseLive } from './factory/passphrase.ts'
 import { RegistryLocationLive } from './factory/registry.ts'
 import { SecretInputLive } from './factory/secret-input.ts'
@@ -43,6 +44,7 @@ const AppLayer = Layer.mergeAll(
   RegistryLocationLive,
   PassphraseLive,
   SecretInputLive,
+  ManualStepLive,
   ProcessRunnerLive
 ).pipe(Layer.provideMerge(NodeServices.layer))
 

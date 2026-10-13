@@ -283,7 +283,9 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com \
 ```
 
 Reading the output: `would …` is a dry-run plan; `exists:` and `reusing …` mean nothing changed;
-`skipped:` means the factory lacks that provider; `manual:` is a follow-up you do by hand.
+`skipped:` means the factory lacks that provider; `manual:` is a follow-up you do by hand. A final
+`next:` appears only when the run wrote Development or `test` variables: `provision env --database`
+after a new sandbox profile, otherwise an env-file refresh (`--skip-install --skip-setup`).
 
 ```text
 [neon]
@@ -343,9 +345,11 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
 - **Preview databases.** Each Preview branch gets its own database from Neon's Vercel integration
   (Neon-managed, connected to `<repo>-dev`): a branch `preview/<git-branch>` copied from
   `baseline`, handed to the branch's deployments before they build. Only an integration can do
-  that, so you connect it once per project; until then the `neon` step prints the steps and holds
-  back Production's `DATABASE_URL`, because the integration refuses to connect while Production
-  or Development has one. Once Vercel's Neon integration has access to the project, the step
+  that, so you connect it once per project. Until then the `neon` step shows the steps and waits:
+  confirm once connected and it checks again and carries on (still not connected: it shows the
+  steps again). Declined, or without a terminal, it prints them as `manual:` lines with the rerun
+  command and holds back Production's `DATABASE_URL`, because the integration refuses to connect
+  while Production or Development has one. Once Vercel's Neon integration has access to the project, the step
   removes the `DATABASE_URL*` (and `PG*`/`POSTGRES_*`) records the integration writes for
   Production and Development, and writes `<repo>-prod` to Production. Rerun `--only neon` after
   changing the integration's settings or rotating `<repo>-dev`'s role password, which makes Neon

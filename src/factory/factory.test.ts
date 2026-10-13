@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { access, readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from '@effect/vitest'
-import { Effect, Layer, Option } from 'effect'
+import { Console, Effect, Layer, Option } from 'effect'
 import { Command } from 'effect/cli'
 import {
   factoryScript,
@@ -13,6 +13,7 @@ import {
 import { scriptedProcessLayer, type Invocation } from '../testing/scripted-process.ts'
 import { passphraseLayer, temporaryDirectory } from '../testing/temporary.ts'
 import { factoryCommand, selectSteps } from './commands.ts'
+import { ManualStep } from './manual-step.ts'
 import { RegistryLocation } from './registry.ts'
 import { parseEnvBlock, SecretInput } from './secret-input.ts'
 
@@ -74,6 +75,8 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
     // Values the operator pastes when asked; an empty queue answers like an empty Enter.
     const answers: Array<string> = []
     const prompts: Array<string> = []
+    // What the operator does before answering each manual step; an empty queue skips it.
+    const manualSteps: Array<() => boolean> = []
     const script = factoryScript(world)
 
     const layer = Layer.mergeAll(
@@ -93,6 +96,14 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
             return values.size === 0 ? Option.none() : Option.some(values)
           })
       }),
+      Layer.succeed(ManualStep, {
+        confirm: instructions =>
+          Effect.sync(() => {
+            prompts.push(instructions)
+
+            return manualSteps.shift()?.() ?? false
+          })
+      }),
       Layer.succeed(RegistryLocation, { file: registry })
     )
 
@@ -104,8 +115,24 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
         'app.acme.test',
         ...args
       ]).pipe(Effect.provide(layer))
+    /** Runs and returns what the command printed. */
+    const output = (...args: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const lines: Array<string> = []
+        const console = yield* Console.Console
+        yield* run(...args).pipe(
+          Effect.provideService(Console.Console, {
+            ...console,
+            log: (...values: ReadonlyArray<unknown>) => {
+              lines.push(values.map(String).join(' '))
+            }
+          })
+        )
 
-    return { repo, world, invocations, run, answers, prompts }
+        return lines.join('\n')
+      })
+
+    return { repo, world, invocations, run, output, answers, prompts, manualSteps }
   })
 
 const records = (world: FakeWorld) => [...world.vercel.envs.values()].flat()
@@ -131,6 +158,9 @@ const qstashBlock = (url: string, token: string) =>
     `QSTASH_CURRENT_SIGNING_KEY="sig_${token}_current"`,
     `export QSTASH_NEXT_SIGNING_KEY='sig_${token}_next'`
   ].join('\n')
+
+/** The follow-up line a run printed, if any. */
+const next = (printed: string) => printed.split('\n').find(line => line.includes('next:'))
 
 afterEach(() => {
   process.exitCode = undefined
@@ -287,6 +317,25 @@ describe('provision factory', () => {
       expect(world.mutations.slice(before)).toEqual([])
       // An atomic rewrite would replace the inode; a matching link is left alone.
       expect((yield* Effect.promise(() => stat(linkFile))).ino).toBe(linked.ino)
+    })
+  )
+
+  it.live('suggests a local follow-up only for what the run changed locally', () =>
+    Effect.gen(function* () {
+      const { output } = yield* setup()
+
+      expect(next(yield* output('--dry-run', ...secretFlags))).toBeUndefined()
+
+      const fresh = next(yield* output('--on-existing', 'abort', ...secretFlags))
+      expect(fresh).toMatch(/next: provision env --repo \S+ --database$/)
+
+      expect(next(yield* output('--on-existing', 'reuse', ...secretFlags))).toBeUndefined()
+      expect(next(yield* output('--only', 'domain', '--on-existing', 'overwrite'))).toBeUndefined()
+
+      const secrets = next(
+        yield* output('--only', 'secrets', '--on-existing', 'overwrite', ...secretFlags)
+      )
+      expect(secrets).toMatch(/next: provision env --repo \S+ --skip-install --skip-setup$/)
     })
   )
 
@@ -562,6 +611,50 @@ describe('provision factory', () => {
       })
   )
 
+  it.live("waits for the operator to connect Neon's Vercel integration, then finishes", () =>
+    Effect.gen(function* () {
+      const { world, output, prompts, manualSteps } = yield* setup()
+      world.vercel.integrations.splice(0, 1, { id: 'icfg_neon', slug: 'neon', projects: [] })
+
+      const connect = () => {
+        const projectId = [...world.vercel.projects.values()][0]?.id ?? ''
+        world.vercel.integrations.splice(0, 1, {
+          id: 'icfg_neon',
+          slug: 'neon',
+          projects: [projectId]
+        })
+        world.vercel.envs.set(projectId, [
+          ...(world.vercel.envs.get(projectId) ?? []),
+          ...['production', 'development'].map(target => ({
+            id: `neon-DATABASE_URL-${target}`,
+            key: 'DATABASE_URL',
+            value: 'postgres://acme-app-dev/neondb',
+            type: 'encrypted',
+            target: [target],
+            customEnvironmentIds: [],
+            configurationId: 'icfg_neon'
+          }))
+        ])
+
+        return true
+      }
+
+      // The operator first answers before connecting, then connects.
+      manualSteps.push(() => true, connect)
+
+      const printed = yield* output('--on-existing', 'abort', '--only', 'vercel,neon')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(prompts).toHaveLength(2)
+      expect(prompts[1]).toContain('still has no access to acme-app')
+      expect(printed).not.toContain('manual:')
+      expect(records(world).filter(record => record.configurationId !== undefined)).toEqual([])
+      expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([
+        expect.objectContaining({ value: 'postgres://acme-app-prod-pooler/neondb' })
+      ])
+    })
+  )
+
   it.live("renames a reused dev project's default branch to baseline, keeping its id", () =>
     Effect.gen(function* () {
       const { world, run } = yield* setup()
@@ -628,6 +721,7 @@ describe('provision factory', () => {
         fakeProvidersLayer(world),
         passphraseLayer(),
         Layer.succeed(SecretInput, { readEnv: () => Effect.succeed(Option.none()) }),
+        Layer.succeed(ManualStep, { confirm: () => Effect.succeed(false) }),
         Layer.succeed(RegistryLocation, { file: join(repo, 'missing.json') })
       )
 

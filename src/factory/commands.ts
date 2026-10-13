@@ -1,9 +1,10 @@
 import { format } from 'node:util'
-import { Console, Effect, Option, Result } from 'effect'
+import { Console, Effect, Option, Ref, Result } from 'effect'
 import { Command, Flag } from 'effect/cli'
 import { resolveAppDirectory } from '../env/paths.ts'
 import { resolveWorkspace } from '../shared/git.ts'
 import { factorySteps, readRepoConfig, type FactoryStep } from '../shared/repo-config.ts'
+import { sandboxProfileKeys } from '../shared/sandbox-profile.ts'
 import { humanOnly } from './approval.ts'
 import {
   factoryError,
@@ -35,6 +36,15 @@ const steps = {
   domain: domainStep
 } satisfies Record<FactoryStep, (context: FactoryContext) => Effect.Effect<void, unknown, unknown>>
 
+type StepEffect = ReturnType<(typeof steps)[FactoryStep]>
+
+/** Any step as one Effect type (a union of the steps' types is too wide to pipe). */
+const stepEffect = (
+  step: FactoryStep,
+  context: FactoryContext
+): Effect.Effect<void, Effect.Error<StepEffect>, Effect.Services<StepEffect>> =>
+  steps[step](context)
+
 /**
  * Runs one step with its output buffered and printed as one block when it ends, so concurrent
  * steps do not interleave. A failing step never interrupts the others mid-mutation.
@@ -49,7 +59,7 @@ const runStep = (step: FactoryStep, context: FactoryContext) =>
         lines.push(format(...args))
       }
     }
-    yield* steps[step](context).pipe(
+    yield* stepEffect(step, context).pipe(
       Effect.provideService(Console.Console, buffered),
       Effect.tapError(error => Effect.sync(() => lines.push(`  failed: ${error.message}`))),
       // Waits while another step is prompting, so output never lands in the middle of a prompt.
@@ -146,6 +156,19 @@ const selectFactory = (registry: Registry, requested: Option.Option<string>, own
     return match
   })
 
+/**
+ * What a local checkout needs after a run, if anything: databases from a new sandbox profile, or
+ * a refresh of its env files when other Development or `test` variables changed.
+ */
+const localFollowUp = (root: string, localEnvKeys: ReadonlySet<string>) =>
+  localEnvKeys.size === 0
+    ? Option.none<string>()
+    : Option.some(
+        sandboxProfileKeys.some(key => localEnvKeys.has(key))
+          ? `provision env --repo ${root} --database`
+          : `provision env --repo ${root} --skip-install --skip-setup`
+      )
+
 interface FactoryOptions {
   readonly checkout: string
   readonly domain: Option.Option<string>
@@ -215,6 +238,7 @@ export const runFactory = (options: FactoryOptions) =>
       secrets,
       dryRun: options.dryRun,
       onExisting: options.onExisting,
+      localEnvKeys: yield* Ref.make<ReadonlySet<string>>(new Set()),
       names: { project: name, development: `${name}-dev`, production: `${name}-prod` }
     }
 
@@ -241,9 +265,11 @@ export const runFactory = (options: FactoryOptions) =>
       )
     }
 
+    const next = localFollowUp(workspace.root, yield* Ref.get(context.localEnvKeys))
+
     yield* Console.log(
       `\nprovision factory: ${options.dryRun ? 'dry run complete' : 'done'}` +
-        `\n  next: provision env --repo ${workspace.root} --database`
+        (Option.isSome(next) ? `\n  next: ${next.value}` : '')
     )
   })
 
