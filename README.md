@@ -35,14 +35,6 @@ npm install -g @magoz/provision
 provision --help
 ```
 
-On a host where coding agents run as your user, install it **root-owned** and run factory commands
-by absolute path, so an agent cannot replace the code that receives your passphrase:
-
-```bash
-sudo npm install -g --prefix /usr/local @magoz/provision
-/usr/local/bin/provision --version
-```
-
 Install the agent skill so coding agents know how to use the CLI (see [Agents](#agents)):
 
 ```bash
@@ -479,7 +471,7 @@ signals as `@vercel/detect-agent`). Under an agent:
     "reason": "this command reads factory admin keys and needs the provision passphrase, typed by a human in a terminal; claude cannot approve it",
     "hint": "ask the human to run the next command in their own terminal and paste its output; never ask for the passphrase",
     "next": [
-      "cd /home/acme/src && /usr/local/bin/provision factory --checkout acme-app --domain app.acme.com --dry-run"
+      "cd /home/acme/src && provision factory --checkout acme-app --domain app.acme.com --dry-run"
     ]
   }
   ```

@@ -33,16 +33,12 @@ JSON object on stderr:
   "status": "approval_required",
   "reason": "…",
   "hint": "…",
-  "next": [
-    "cd /home/acme/src/acme-app && /usr/local/bin/provision factory --domain app.acme.com --dry-run"
-  ]
+  "next": ["cd /home/acme/src/acme-app && provision factory --domain app.acme.com --dry-run"]
 }
 ```
 
 Give the human the `next` command verbatim, say in one or two sentences what it will do, and wait
-for them to paste the output. You may also skip the attempt and write the command yourself; use
-`/usr/local/bin/provision` when it exists, since a `provision` earlier on `PATH` could be a
-different binary.
+for them to paste the output. You may also skip the attempt and write the command yourself.
 
 Agents are also detected for `provision env`, which then never prompts (as with
 `--non-interactive`).
@@ -163,7 +159,7 @@ the commands, in order:
 
 ```bash
 # 1. Plan: reads providers, changes nothing
-/usr/local/bin/provision factory --checkout <checkout> --domain <production-host> \
+provision factory --checkout <checkout> --domain <production-host> \
   --only vercel,neon,resend,secrets,domain \
   --sender-name <App name> --email-from login@<verified-domain> \
   --secret BETTER_AUTH_SECRET --secret CRON_SECRET=hex-32 --dry-run
@@ -186,7 +182,7 @@ Reading the output: each step prints one block. `would …` is a dry-run plan, `
 
 QStash credentials are pasted by the human when `provision factory` asks for them (hidden input,
 written straight to Vercel). If they skipped it, give them
-`/usr/local/bin/provision factory --checkout <checkout> --domain <host> --only upstash --on-existing reuse`.
+`provision factory --checkout <checkout> --domain <host> --only upstash --on-existing reuse`.
 Never ask the human to paste QStash values, or any other credential, into the chat.
 
 `--on-existing`: `ask` (default, prompts), `reuse` (change nothing that exists), `overwrite`

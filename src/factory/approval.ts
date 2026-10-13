@@ -1,9 +1,5 @@
-import { existsSync } from 'node:fs'
 import { Console, Effect } from 'effect'
 import { detectAgent } from '../shared/agent.ts'
-
-/** Where the operator installs the root-owned binary that approved commands must run. */
-export const rootOwnedBinary = '/usr/local/bin/provision'
 
 const shellSafe = /^[\w/.,:=@%+-]+$/
 
@@ -21,15 +17,12 @@ export interface ApprovalRequired {
 export const approvalRequired = (input: {
   readonly agent: string
   readonly cwd: string
-  readonly binary: string
   readonly args: ReadonlyArray<string>
 }): ApprovalRequired => ({
   status: 'approval_required',
   reason: `this command reads factory admin keys and needs the provision passphrase, typed by a human in a terminal; ${input.agent} cannot approve it`,
   hint: 'ask the human to run the next command in their own terminal and paste its output; never ask for the passphrase',
-  next: [
-    `cd ${shellQuote(input.cwd)} && ${[input.binary, ...input.args].map(shellQuote).join(' ')}`
-  ]
+  next: [`cd ${shellQuote(input.cwd)} && ${['provision', ...input.args].map(shellQuote).join(' ')}`]
 })
 
 /**
@@ -42,12 +35,7 @@ export const humanOnly = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
     if (agent === undefined) return effect
 
-    const payload = approvalRequired({
-      agent,
-      cwd: process.cwd(),
-      binary: existsSync(rootOwnedBinary) ? rootOwnedBinary : 'provision',
-      args: process.argv.slice(2)
-    })
+    const payload = approvalRequired({ agent, cwd: process.cwd(), args: process.argv.slice(2) })
 
     return Console.error(JSON.stringify(payload)).pipe(
       Effect.andThen(

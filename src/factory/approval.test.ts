@@ -18,14 +18,13 @@ describe('approvalRequired', () => {
     const payload = approvalRequired({
       agent: 'claude',
       cwd: '/home/acme/src/acme app',
-      binary: '/usr/local/bin/provision',
       args: ['factory', '--checkout', '.', '--sender-name', "Acme's App"]
     })
 
     expect(payload.status).toBe('approval_required')
     expect(payload.reason).toContain('claude')
     expect(payload.next).toEqual([
-      `cd '/home/acme/src/acme app' && /usr/local/bin/provision factory --checkout . --sender-name 'Acme'\\''s App'`
+      `cd '/home/acme/src/acme app' && provision factory --checkout . --sender-name 'Acme'\\''s App'`
     ])
   })
 
