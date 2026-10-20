@@ -23,6 +23,7 @@ jobs:
       - name: Check tag matches package version
         run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
       - run: pnpm verify
+      - run: pnpm smoke
       - name: Skip versions already on npm
         id: published
         run: |
