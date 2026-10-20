@@ -390,6 +390,13 @@ setup failure keeps them, since they are valid; fix the cause and rerun to resum
 ambiguous Vercel link prints `{"status":"vercel_link_required","directory":…,"reason":…}` on stderr
 and exits 3; rerun with `--source` or `--vercel-project`.
 
+**Checkouts that are not Vercel apps.** The app is a Vercel app when `provision.appDir`,
+`--app-dir`, or `--vercel-project` is given, or when its `.vercel/project.json` exists in this
+checkout, `--source`, or any worktree of the repository. Otherwise (a library or tool) there is
+nothing to link, pull, or allocate: `env` warns, skips steps 4–6 and their path checks, skips the
+install when there is no lockfile, and still runs `provision.setup`; `--check-vercel-link` exits 0.
+To make a new Vercel app's link required, declare `provision.appDir` (`"."` for a single app).
+
 **Adding a variable.** Vercel is the source of truth: each run rewrites the env files from it, so
 add new variables to the Vercel project and pull again rather than editing `.env.local`:
 

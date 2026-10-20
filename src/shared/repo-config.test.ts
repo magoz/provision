@@ -31,6 +31,7 @@ describe('parseRepoConfig', () => {
 
       expect(config).toEqual({
         appDir: 'apps/web',
+        appDirDeclared: true,
         setup: ['pnpm db:migrate'],
         factory: { steps: ['neon', 'secrets'], neon: { sandboxParent: 'existing-branch' } }
       })

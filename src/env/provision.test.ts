@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from '@effect/vitest'
 import { Effect, Layer, Option } from 'effect'
@@ -63,6 +63,8 @@ interface Fixture {
   readonly appDir?: string
   readonly neon?: FakeNeonOptions
   readonly linkPrimary?: boolean
+  readonly gitignore?: string
+  readonly lockfile?: boolean
 }
 
 const fixture = (options: Fixture = {}) =>
@@ -78,8 +80,11 @@ const fixture = (options: Fixture = {}) =>
       await mkdir(join(primary, appDir, '.vercel'), { recursive: true })
       git(primary, 'init', '--quiet', '--initial-branch', 'main')
       git(primary, 'remote', 'add', 'origin', 'git@github.com:owner/repo.git')
-      await writeFile(join(primary, '.gitignore'), '.env.local\n.env.test\n.vercel\n')
-      await writeFile(join(primary, 'pnpm-lock.yaml'), '')
+      await writeFile(
+        join(primary, '.gitignore'),
+        options.gitignore ?? '.env.local\n.env.test\n.vercel\n'
+      )
+      if (options.lockfile !== false) await writeFile(join(primary, 'pnpm-lock.yaml'), '')
       await writeFile(
         join(primary, 'package.json'),
         JSON.stringify({ name: 'repo', ...options.packageJson })
@@ -191,11 +196,82 @@ describe('provision env', () => {
 
   it.live('reports a missing Vercel link as JSON with exit code 3', () =>
     Effect.gen(function* () {
-      const env = yield* fixture({ linkPrimary: false })
+      const env = yield* fixture({
+        packageJson: { provision: { appDir: '.' } },
+        linkPrimary: false
+      })
 
       yield* env.run('--repo', env.worktree, '--check-vercel-link', '--non-interactive')
 
       expect(process.exitCode).toBe(3)
+      expect(env.invocations).toEqual([])
+    })
+  )
+
+  it.live('counts a dangling link symlink as Vercel configuration, never skipping it', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({ linkPrimary: false })
+      yield* Effect.promise(() =>
+        symlink(join(env.primary, 'missing.json'), join(env.primary, '.vercel', 'project.json'))
+      )
+
+      yield* env.run('--repo', env.worktree, '--check-vercel-link', '--non-interactive')
+
+      expect(process.exitCode).toBe(3)
+    })
+  )
+
+  it.live('passes the link check for a checkout that is not a Vercel app', () =>
+    Effect.gen(function* () {
+      // Nothing is linked anywhere and, as in many tools, .vercel and env files are not ignored.
+      const env = yield* fixture({ linkPrimary: false, gitignore: 'node_modules\n' })
+
+      yield* env.run('--repo', env.worktree, '--check-vercel-link', '--non-interactive')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(env.invocations).toEqual([])
+      expect(yield* env.read('.vercel/project.json')).toBeUndefined()
+    })
+  )
+
+  it.live('installs and runs setup, without Vercel or databases, when not a Vercel app', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({
+        packageJson: { provision: { setup: ['pnpm build'] } },
+        linkPrimary: false,
+        gitignore: 'node_modules\n'
+      })
+
+      yield* env.run(
+        '--repo',
+        env.worktree,
+        '--source',
+        env.primary,
+        '--database',
+        '--non-interactive'
+      )
+
+      expect(process.exitCode).toBeUndefined()
+      expect(env.invocations.some(invocation => invocation.command === 'vercel')).toBe(false)
+      expect(env.invocations.find(invocation => invocation.command === 'pnpm')?.args).toEqual([
+        'install',
+        '--frozen-lockfile'
+      ])
+      expect(setupCommands(env.invocations)).toEqual(['pnpm build'])
+      expect(yield* env.read('.env.local')).toBeUndefined()
+      expect(yield* env.read('.env.test')).toBeUndefined()
+      expect(Option.isNone(yield* env.lease('default'))).toBe(true)
+      expect([...env.neon.branches.keys()]).toEqual(['parent'])
+    })
+  )
+
+  it.live('skips the install without a lockfile when not a Vercel app', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({ linkPrimary: false, lockfile: false })
+
+      yield* env.run('--repo', env.worktree, '--database', '--non-interactive')
+
+      expect(process.exitCode).toBeUndefined()
       expect(env.invocations).toEqual([])
     })
   )

@@ -64,6 +64,65 @@ export const readVercelIdentity = (projectFile: string) =>
     return `${parsed.orgId}:${parsed.projectId}`
   })
 
+/** Every checkout `git worktree list` reports for the repository of `checkout`. */
+const listCheckouts = (checkout: string) =>
+  gitOutput(checkout, ['worktree', 'list', '--porcelain']).pipe(
+    Effect.map(listed =>
+      Option.getOrElse(listed, () => '')
+        .split('\n')
+        .flatMap(line => (line.startsWith('worktree ') ? [line.slice('worktree '.length)] : []))
+    )
+  )
+
+/** Whether anything occupies `file`, counting a dangling symlink (validation rejects it later). */
+const occupied = (file: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+
+    if (yield* fs.exists(file).pipe(Effect.orElseSucceed(() => false))) return true
+
+    return yield* fs.readLink(file).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false)
+    )
+  })
+
+export interface VercelEvidenceRequest {
+  /** Absolute checkout root. */
+  readonly checkout: string
+  readonly appDir: string
+  /** The app directory was chosen explicitly (`provision.appDir` or `--app-dir`). */
+  readonly appDirExplicit: boolean
+  readonly source: string | undefined
+  readonly vercelProject: string | undefined
+}
+
+/**
+ * Whether the selected app is deployed on Vercel, from local evidence only (no network, no env
+ * files): an explicit app directory or `--vercel-project`, or the app's `.vercel/project.json` in
+ * this checkout, `--source`, or any worktree of the repository. Without any (libraries, tools)
+ * there is nothing to link, pull, or allocate, so callers skip those steps instead of failing.
+ */
+export const usesVercel = (request: VercelEvidenceRequest) =>
+  Effect.gen(function* () {
+    if (request.appDirExplicit || request.vercelProject !== undefined) return true
+
+    const path = yield* Path.Path
+    const checkouts = [
+      request.checkout,
+      ...(request.source === undefined ? [] : [path.resolve(request.source)]),
+      ...(yield* listCheckouts(request.checkout))
+    ]
+
+    for (const checkout of checkouts) {
+      if (yield* occupied(path.join(checkout, request.appDir, '.vercel', 'project.json'))) {
+        return true
+      }
+    }
+
+    return false
+  })
+
 const originUrl = (cwd: string) =>
   gitOutput(cwd, ['remote', 'get-url', 'origin']).pipe(Effect.map(Option.getOrElse(() => '')))
 
@@ -201,13 +260,9 @@ export const ensureVercelLink = (request: LinkRequest) =>
       return true
     }
 
-    const listed = yield* gitOutput(request.checkout, ['worktree', 'list', '--porcelain'])
     const candidates: Array<string> = []
 
-    for (const line of Option.getOrElse(listed, () => '').split('\n')) {
-      if (!line.startsWith('worktree ')) continue
-      const candidate = line.slice('worktree '.length)
-
+    for (const candidate of yield* listCheckouts(request.checkout)) {
       if (path.resolve(candidate) === request.checkout) continue
       const linkedFile = path.join(candidate, request.appDir, '.vercel', 'project.json')
 

@@ -2,8 +2,13 @@ import { Console, Effect, FileSystem, Path } from 'effect'
 import { capture, inherit } from '../shared/process.ts'
 import { fail } from './domain.ts'
 
-/** Installs dependencies from the checkout root's committed lockfile, never updating it. */
-export const installDependencies = (repo: string) =>
+/**
+ * Installs dependencies from the checkout root's committed lockfile, never updating it. Without a
+ * supported lockfile, `missingLockfile` decides: an app checkout fails, a checkout that is not a
+ * Vercel app (a tool or library, possibly not even JavaScript) skips the install with a warning.
+ * Returns whether dependencies were installed.
+ */
+export const installDependencies = (repo: string, missingLockfile: 'fail' | 'skip') =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     const path = yield* Path.Path
@@ -14,7 +19,8 @@ export const installDependencies = (repo: string) =>
     const run = (label: string, command: string, args: ReadonlyArray<string>) =>
       Console.log(`provision env: installing dependencies with ${label}`).pipe(
         Effect.andThen(inherit(command, args, { cwd: repo })),
-        Effect.mapError(error => fail(error.message))
+        Effect.mapError(error => fail(error.message)),
+        Effect.as(true)
       )
 
     if (yield* exists('pnpm-lock.yaml')) {
@@ -35,6 +41,12 @@ export const installDependencies = (repo: string) =>
       const flag = Number.isInteger(major) && major >= 2 ? '--immutable' : '--frozen-lockfile'
 
       return yield* run(`yarn ${flag}`, 'yarn', ['install', flag])
+    }
+
+    if (missingLockfile === 'skip') {
+      return yield* Console.error(
+        `provision env: warning: no supported lockfile in ${repo}; skipped dependency install`
+      ).pipe(Effect.as(false))
     }
 
     return yield* fail(`no supported lockfile found in ${repo}`)

@@ -24,7 +24,7 @@ export const envCommand = Command.make(
     ),
     checkVercelLink: booleanFlag(
       'check-vercel-link',
-      'check/reuse a local app link only; missing or ambiguous links emit JSON on stderr and exit 3'
+      'check/reuse a local app link only; passes for a checkout that is not a Vercel app; missing or ambiguous links emit JSON on stderr and exit 3'
     ),
     appDir: optionalText(
       'app-dir',
