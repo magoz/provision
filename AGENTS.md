@@ -40,6 +40,14 @@ tools (for example `worktree`). Changing them requires updating the snapshot tes
 and a breaking change requires bumping `contractVersion` and a major version. Keep the README and
 `skills/provision/SKILL.md` in sync with commands, flags, and output.
 
+## Dependencies
+
+Pin `effect` and every `@effect/*` package to the same exact version, including
+`@effect/platform-node-shared`, which `provision` never imports: `@effect/platform-node` depends on
+it with a caret range, so without the pin a fresh `npm install -g` resolves a newer release whose
+`effect` peer is ahead of ours, and the CLI fails at startup. The lockfile does not protect npm
+users; `pnpm smoke` (CI and release) installs the packed tarball the way they do.
+
 ## Tests
 
 - Vitest + `@effect/vitest` (`it.effect`), colocated `*.test.ts`.

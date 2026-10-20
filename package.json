@@ -25,10 +25,12 @@
     "format:fix": "oxfmt --write .",
     "test": "vitest run",
     "verify": "pnpm format:check && pnpm typecheck && pnpm lint && pnpm test && pnpm build",
-    "prepublishOnly": "pnpm verify"
+    "prepublishOnly": "pnpm verify",
+    "smoke": "rm -rf .smoke && mkdir .smoke && npm pack --silent --pack-destination .smoke && npm install --silent --no-audit --no-fund --prefix .smoke ./.smoke/magoz-provision-*.tgz && .smoke/node_modules/.bin/provision --version"
   },
   "dependencies": {
     "@effect/platform-node": "4.0.3",
+    "@effect/platform-node-shared": "4.0.3",
     "effect": "4.0.3"
   },
   "devDependencies": {

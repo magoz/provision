@@ -20,3 +20,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+      # Installs the packed tarball as users do (fresh npm resolution, no lockfile) and runs it.
+      - run: pnpm smoke
