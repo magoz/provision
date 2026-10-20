@@ -65,6 +65,8 @@ interface Fixture {
   readonly linkPrimary?: boolean
   readonly gitignore?: string
   readonly lockfile?: boolean
+  /** Extra committed files, relative to the checkout root. */
+  readonly files?: Readonly<Record<string, string>>
 }
 
 const fixture = (options: Fixture = {}) =>
@@ -85,6 +87,9 @@ const fixture = (options: Fixture = {}) =>
         options.gitignore ?? '.env.local\n.env.test\n.vercel\n'
       )
       if (options.lockfile !== false) await writeFile(join(primary, 'pnpm-lock.yaml'), '')
+      for (const [file, content] of Object.entries(options.files ?? {})) {
+        await writeFile(join(primary, file), content)
+      }
       await writeFile(
         join(primary, 'package.json'),
         JSON.stringify({ name: 'repo', ...options.packageJson })
@@ -194,17 +199,32 @@ describe('provision env', () => {
     })
   )
 
-  it.live('reports a missing Vercel link as JSON with exit code 3', () =>
-    Effect.gen(function* () {
-      const env = yield* fixture({
-        packageJson: { provision: { appDir: '.' } },
-        linkPrimary: false
+  const unlinkedVercelApps: ReadonlyArray<readonly [string, Fixture]> = [
+    ['provision.appDir', { packageJson: { provision: { appDir: '.' } } }],
+    ['provision.factory', { packageJson: { provision: { factory: { steps: ['vercel'] } } } }],
+    ['a committed vercel.json', { files: { 'vercel.json': '{}' } }]
+  ]
+
+  for (const [evidence, options] of unlinkedVercelApps) {
+    it.live(`reports a missing Vercel link as JSON with exit code 3 (${evidence})`, () =>
+      Effect.gen(function* () {
+        const env = yield* fixture({ ...options, linkPrimary: false })
+
+        yield* env.run('--repo', env.worktree, '--check-vercel-link', '--non-interactive')
+
+        expect(process.exitCode).toBe(3)
+        expect(env.invocations).toEqual([])
       })
+    )
+  }
 
-      yield* env.run('--repo', env.worktree, '--check-vercel-link', '--non-interactive')
+  it.live('still fails a Vercel app without a lockfile', () =>
+    Effect.gen(function* () {
+      const env = yield* fixture({ lockfile: false })
 
-      expect(process.exitCode).toBe(3)
-      expect(env.invocations).toEqual([])
+      yield* env.run('--repo', env.worktree, '--non-interactive', '--skip-setup')
+
+      expect(process.exitCode).toBe(2)
     })
   )
 

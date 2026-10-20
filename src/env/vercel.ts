@@ -91,33 +91,44 @@ export interface VercelEvidenceRequest {
   /** Absolute checkout root. */
   readonly checkout: string
   readonly appDir: string
-  /** The app directory was chosen explicitly (`provision.appDir` or `--app-dir`). */
-  readonly appDirExplicit: boolean
+  /** Declared explicitly: `provision.appDir`, `provision.factory`, or `--app-dir`. */
+  readonly declared: boolean
   readonly source: string | undefined
   readonly vercelProject: string | undefined
 }
 
 /**
  * Whether the selected app is deployed on Vercel, from local evidence only (no network, no env
- * files): an explicit app directory or `--vercel-project`, or the app's `.vercel/project.json` in
- * this checkout, `--source`, or any worktree of the repository. Without any (libraries, tools)
- * there is nothing to link, pull, or allocate, so callers skip those steps instead of failing.
+ * files): an explicit declaration or `--vercel-project`; the app's committed `vercel.json`; or a
+ * Vercel link (the app's `.vercel/project.json`, or a root `.vercel/repo.json`) in this checkout,
+ * `--source`, or any worktree of the repository. Without any (libraries, tools) there is nothing
+ * to link, pull, or allocate, so callers skip those steps instead of failing.
  */
 export const usesVercel = (request: VercelEvidenceRequest) =>
   Effect.gen(function* () {
-    if (request.appDirExplicit || request.vercelProject !== undefined) return true
+    if (request.declared || request.vercelProject !== undefined) return true
 
     const path = yield* Path.Path
-    const checkouts = [
-      request.checkout,
-      ...(request.source === undefined ? [] : [path.resolve(request.source)]),
-      ...(yield* listCheckouts(request.checkout))
-    ]
 
-    for (const checkout of checkouts) {
-      if (yield* occupied(path.join(checkout, request.appDir, '.vercel', 'project.json'))) {
-        return true
-      }
+    if (yield* occupied(path.join(request.checkout, request.appDir, 'vercel.json'))) return true
+
+    const { source } = request
+    const sources =
+      source === undefined
+        ? []
+        : [yield* resolveCheckout(source).pipe(Effect.orElseSucceed(() => path.resolve(source)))]
+
+    for (const checkout of [
+      request.checkout,
+      ...sources,
+      ...(yield* listCheckouts(request.checkout))
+    ]) {
+      const links = [
+        path.join(checkout, request.appDir, '.vercel', 'project.json'),
+        path.join(checkout, '.vercel', 'repo.json')
+      ]
+
+      for (const link of links) if (yield* occupied(link)) return true
     }
 
     return false

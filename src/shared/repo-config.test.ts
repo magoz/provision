@@ -10,6 +10,9 @@ const failureMessage = (text: string) =>
     Effect.map(error => error.message)
   )
 
+const declares = (provision: Record<string, unknown>) =>
+  parseRepoConfig(packageJson({ provision })).pipe(Effect.map(config => config.declaresVercelApp))
+
 describe('parseRepoConfig', () => {
   it.effect('uses defaults without a provision key', () =>
     Effect.gen(function* () {
@@ -31,10 +34,18 @@ describe('parseRepoConfig', () => {
 
       expect(config).toEqual({
         appDir: 'apps/web',
-        appDirDeclared: true,
+        declaresVercelApp: true,
         setup: ['pnpm db:migrate'],
         factory: { steps: ['neon', 'secrets'], neon: { sandboxParent: 'existing-branch' } }
       })
+    })
+  )
+
+  it.effect('declares a Vercel app only through appDir or factory', () =>
+    Effect.gen(function* () {
+      expect(yield* declares({ appDir: '.' })).toBe(true)
+      expect(yield* declares({ factory: {} })).toBe(true)
+      expect(yield* declares({ setup: ['pnpm build'] })).toBe(false)
     })
   )
 

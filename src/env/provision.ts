@@ -34,7 +34,7 @@ import {
 type LeaseSlot = 'default' | 'test'
 
 const notAVercelApp =
-  'not a Vercel app (no provision.appDir and no .vercel/project.json in any checkout)'
+  'not a Vercel app (no provision.appDir/factory, vercel.json, or Vercel link in any checkout)'
 
 /** What this invocation created or replaced, so a failed run can restore the previous state. */
 interface RollbackState {
@@ -252,7 +252,7 @@ export const provisionEnvironment = (options: EnvOptions) =>
     const vercel = yield* usesVercel({
       checkout: repo,
       appDir,
-      appDirExplicit: options.appDir !== undefined || config.appDirDeclared,
+      declared: options.appDir !== undefined || config.declaresVercelApp,
       source: options.source,
       vercelProject: options.vercelProject
     })
