@@ -27,10 +27,14 @@ import {
   ensureVercelLink,
   listExplicitVercelKeys,
   pullVercelEnvironment,
-  readVercelIdentity
+  readVercelIdentity,
+  usesVercel
 } from './vercel.ts'
 
 type LeaseSlot = 'default' | 'test'
+
+const notAVercelApp =
+  'not a Vercel app (no provision.appDir/factory, vercel.json, or Vercel link in any checkout)'
 
 /** What this invocation created or replaced, so a failed run can restore the previous state. */
 interface RollbackState {
@@ -245,8 +249,22 @@ export const provisionEnvironment = (options: EnvOptions) =>
     const { appDir, directory } = yield* resolveAppDirectory(repo, options.appDir ?? config.appDir)
     const vercelLinkRelative = path.join(appDir, '.vercel', 'project.json')
 
+    const vercel = yield* usesVercel({
+      checkout: repo,
+      appDir,
+      declared: options.appDir !== undefined || config.declaresVercelApp,
+      source: options.source,
+      vercelProject: options.vercelProject
+    })
+
     // Preflight for callers about to create a worktree: validate or reuse a local link only.
     if (options.checkVercelLink) {
+      if (!vercel) {
+        yield* Console.log(`provision env: ${notAVercelApp}; nothing to link`)
+
+        return
+      }
+
       yield* ensureProvisionPaths(directory, ['.vercel/project.json'])
       yield* ensureSecretPath(repo, vercelLinkRelative)
       yield* ensureVercelLink({
@@ -259,6 +277,16 @@ export const provisionEnvironment = (options: EnvOptions) =>
       yield* readVercelIdentity(path.join(directory, '.vercel', 'project.json'))
 
       return
+    }
+
+    // A checkout that is not a Vercel app has no env files to pull and no database profile.
+    const skipVercel = options.skipVercel || !vercel
+    const database = options.database && vercel
+
+    if (!vercel && (!options.skipVercel || options.database)) {
+      yield* Console.error(
+        `provision env: warning: ${notAVercelApp}; skipped Vercel env and databases`
+      )
     }
 
     const localRelative = path.join(appDir, '.env.local')
@@ -355,12 +383,12 @@ export const provisionEnvironment = (options: EnvOptions) =>
 
             const sanitized = stripPulledEnvironment(pulled ?? '', {
               explicitKeys,
-              replaceDatabaseUrls: options.database,
+              replaceDatabaseUrls: database,
               removeResetConsent
             })
 
             const content =
-              options.database || snapshot === undefined
+              database || snapshot === undefined
                 ? sanitized.content
                 : keepExistingDatabaseUrls(sanitized.content, snapshot)
 
@@ -418,7 +446,7 @@ export const provisionEnvironment = (options: EnvOptions) =>
       })
 
     const operation = Effect.gen(function* () {
-      if (!options.skipVercel || options.database) {
+      if (!skipVercel || database) {
         yield* ensureProvisionPaths(directory, ['.env.local', '.env.test', '.vercel/project.json'])
         yield* ensureSecretPath(repo, localRelative)
         yield* ensureSecretPath(repo, testRelative)
@@ -429,7 +457,7 @@ export const provisionEnvironment = (options: EnvOptions) =>
       const localExists = localBefore !== undefined
       const testExists = testBefore !== undefined
 
-      const decision = options.skipVercel
+      const decision = skipVercel
         ? 'preserve'
         : yield* resolveEnvConflict(
             options.envConflict,
@@ -438,18 +466,20 @@ export const provisionEnvironment = (options: EnvOptions) =>
             testExists
           )
 
-      const pullVercel = !options.skipVercel && decision === 'overwrite'
+      const pullVercel = !skipVercel && decision === 'overwrite'
       state.localEnvSnapshot = localBefore
       state.testEnvSnapshot = testBefore
 
-      if (!options.skipInstall) yield* installDependencies(repo)
+      const installed = options.skipInstall
+        ? false
+        : yield* installDependencies(repo, vercel ? 'fail' : 'skip')
 
       if (pullVercel) yield* pullEnvironments(localExists, testExists)
 
       const currentLocal = yield* readPrivately(localEnvFile).pipe(io('cannot read .env.local'))
       yield* ensureNoLocalResetConsent(currentLocal ?? '')
 
-      if (options.database) {
+      if (database) {
         const label =
           options.label ??
           Option.getOrElse(
@@ -471,7 +501,7 @@ export const provisionEnvironment = (options: EnvOptions) =>
         yield* createDatabaseLease('test', testRelative, `${label}-test`)
       }
 
-      return pullVercel
+      return { pulled: pullVercel, installed }
     })
 
     const rollback = Effect.gen(function* () {
@@ -532,15 +562,27 @@ export const provisionEnvironment = (options: EnvOptions) =>
       }
     })
 
-    const pulled = yield* withProvisionLifecycleUsing(acquireLock, operation, rollback, lock =>
-      fs.remove(lock, { recursive: true }).pipe(io(`cannot release provision lock ${lock}`))
+    const { pulled, installed } = yield* withProvisionLifecycleUsing(
+      acquireLock,
+      operation,
+      rollback,
+      lock => fs.remove(lock, { recursive: true }).pipe(io(`cannot release provision lock ${lock}`))
     )
 
     // Setup runs after the lock is released and never rolls back provisioned env or databases:
-    // they are valid, and setup commands are idempotent, so a re-run resumes.
+    // they are valid, and setup commands are idempotent, so a re-run resumes. It follows the
+    // requested run, so a full run of a checkout that is not a Vercel app still sets it up.
     const runsSetup = !options.skipSetup && (!options.skipVercel || options.database)
 
     if (runsSetup) yield* runSetup(repo, config.setup)
+
+    const vercelEnv = pulled
+      ? '.env.local + .env.test'
+      : !vercel
+        ? 'not a Vercel app'
+        : options.skipVercel
+          ? 'skipped'
+          : 'preserved'
 
     yield* Console.log(
       [
@@ -548,9 +590,9 @@ export const provisionEnvironment = (options: EnvOptions) =>
         'provision env: ready',
         `  repo:       ${repo}`,
         `  app:        ${directory}`,
-        `  install:    ${options.skipInstall ? 'skipped' : 'complete'}`,
-        `  vercel env: ${pulled ? '.env.local + .env.test' : options.skipVercel ? 'skipped' : 'preserved'}`,
-        `  databases:  ${options.database ? 'development + test ready' : 'skipped'}`,
+        `  install:    ${installed ? 'complete' : options.skipInstall ? 'skipped' : 'skipped (no lockfile)'}`,
+        `  vercel env: ${vercelEnv}`,
+        `  databases:  ${database ? 'development + test ready' : 'skipped'}`,
         `  setup:      ${runsSetup ? `${config.setup.length} command(s)` : 'skipped'}`
       ].join('\n')
     )

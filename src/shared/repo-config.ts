@@ -32,6 +32,11 @@ export type SandboxParentMode = (typeof sandboxParentModes)[number]
 export interface RepoConfig {
   /** Checkout-relative application directory (POSIX, normalized); `.` for single-app repos. */
   readonly appDir: string
+  /**
+   * Whether `provision.appDir` or `provision.factory` is declared: explicit evidence that the app is
+   * deployed on Vercel (the factory creates its Vercel project; `appDir` is its Root Directory).
+   */
+  readonly declaresVercelApp: boolean
   /** Commands run by `provision env` after env files and databases are ready. */
   readonly setup: ReadonlyArray<string>
   readonly factory: {
@@ -87,6 +92,7 @@ export const normalizeAppDir = (appDir: string): string | undefined => {
 
 export const defaultRepoConfig: RepoConfig = {
   appDir: '.',
+  declaresVercelApp: false,
   setup: [],
   factory: { steps: factorySteps, neon: { sandboxParent: undefined } }
 }
@@ -126,6 +132,7 @@ export const parseRepoConfig = (packageJsonText: string) =>
 
     return {
       appDir,
+      declaresVercelApp: input.appDir !== undefined || input.factory !== undefined,
       setup: input.setup ?? [],
       factory: {
         steps:
