@@ -159,6 +159,20 @@ const qstashBlock = (url: string, token: string) =>
     `export QSTASH_NEXT_SIGNING_KEY='sig_${token}_next'`
   ].join('\n')
 
+/** Adds a branch Neon's Vercel integration leaves in `acme-app-dev` once connected. */
+const neonBranch = (world: FakeWorld, name: string) => {
+  world.neon.projects
+    .find(project => project.name === 'acme-app-dev')
+    ?.branches.push({ id: `br-${name}`, name, default: false, protected: false })
+}
+
+/** The operator connects `acme-app-dev` in Neon's console, then confirms. */
+const connectInNeon = (world: FakeWorld) => () => {
+  neonBranch(world, 'vercel-dev')
+
+  return true
+}
+
 /** The follow-up line a run printed, if any. */
 const next = (printed: string) => printed.split('\n').find(line => line.includes('next:'))
 
@@ -169,7 +183,8 @@ afterEach(() => {
 describe('provision factory', () => {
   it.live('provisions every step for a fresh repository', () =>
     Effect.gen(function* () {
-      const { repo, world, invocations, run } = yield* setup()
+      const { repo, world, invocations, run, manualSteps } = yield* setup()
+      manualSteps.push(connectInNeon(world))
 
       yield* run('--on-existing', 'abort', ...secretFlags)
       expect(process.exitCode).toBeUndefined()
@@ -305,8 +320,10 @@ describe('provision factory', () => {
 
   it.live('changes nothing when rerun with reuse', () =>
     Effect.gen(function* () {
-      const { repo, world, run } = yield* setup()
+      const { repo, world, run, manualSteps } = yield* setup()
+      manualSteps.push(connectInNeon(world))
       yield* run('--on-existing', 'abort', ...secretFlags)
+      expect(recordFor(world, 'DATABASE_URL', 'production')).toHaveLength(1)
       const before = world.mutations.length
       const linkFile = join(repo, '.vercel', 'project.json')
       const linked = yield* Effect.promise(() => stat(linkFile))
@@ -649,6 +666,105 @@ describe('provision factory', () => {
       expect(prompts[1]).toContain('still has no access to acme-app')
       expect(printed).not.toContain('manual:')
       expect(records(world).filter(record => record.configurationId !== undefined)).toEqual([])
+      expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([
+        expect.objectContaining({ value: 'postgres://acme-app-prod-pooler/neondb' })
+      ])
+    })
+  )
+
+  it.live('treats access to all Vercel projects as not connected until Neon connects', () =>
+    Effect.gen(function* () {
+      const { world, output, prompts, manualSteps } = yield* setup()
+
+      // The operator first answers before connecting in Neon, then declines.
+      manualSteps.push(() => true)
+
+      const printed = yield* output('--on-existing', 'abort', '--only', 'vercel,neon')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(prompts).toHaveLength(2)
+      expect(prompts[0]).not.toContain('Manage Access')
+      expect(prompts[0]).toContain('Neon → project acme-app-dev → Integrations → Vercel')
+      expect(prompts[1]).toContain('acme-app-dev is still not connected to acme-app')
+      expect(printed).toContain('manual:')
+      expect(printed).toContain('held back: Production DATABASE_URL')
+      expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([])
+
+      manualSteps.push(connectInNeon(world))
+      yield* output('--on-existing', 'reuse', '--only', 'neon')
+      expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([
+        expect.objectContaining({ value: 'postgres://acme-app-prod-pooler/neondb' })
+      ])
+    })
+  )
+
+  it.live('treats a listed Vercel project as not connected until Neon connects', () =>
+    Effect.gen(function* () {
+      const { world, run, output, prompts } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      const projectId = [...world.vercel.projects.values()][0]?.id ?? ''
+      world.vercel.integrations.splice(0, 1, {
+        id: 'icfg_neon',
+        slug: 'neon',
+        projects: [projectId]
+      })
+
+      const printed = yield* output('--on-existing', 'reuse', '--only', 'neon')
+
+      expect(prompts).toHaveLength(1)
+      expect(printed).toContain('manual:')
+      expect(printed).toContain('held back: Production DATABASE_URL')
+      expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([])
+    })
+  )
+
+  for (const branch of ['vercel-dev', 'preview/feature']) {
+    it.live(`treats access to all Vercel projects plus a ${branch} branch as connected`, () =>
+      Effect.gen(function* () {
+        const { world, run, output, prompts } = yield* setup()
+        yield* run('--on-existing', 'abort', '--only', 'vercel,neon')
+        expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([])
+        neonBranch(world, branch)
+        prompts.length = 0
+
+        const printed = yield* output('--on-existing', 'reuse', '--only', 'neon')
+
+        expect(process.exitCode).toBeUndefined()
+        expect(prompts).toEqual([])
+        expect(printed).not.toContain('manual:')
+        expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([
+          expect.objectContaining({ value: 'postgres://acme-app-prod-pooler/neondb' })
+        ])
+      })
+    )
+  }
+
+  it.live('treats a Preview record owned by the integration as connected and keeps it', () =>
+    Effect.gen(function* () {
+      const { world, run, output, prompts } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      const projectId = [...world.vercel.projects.values()][0]?.id ?? ''
+      world.vercel.envs.set(projectId, [
+        ...(world.vercel.envs.get(projectId) ?? []),
+        {
+          id: 'neon-DATABASE_URL-preview',
+          key: 'DATABASE_URL',
+          value: 'postgres://acme-app-dev-preview/neondb',
+          type: 'encrypted',
+          target: ['preview'],
+          customEnvironmentIds: [],
+          configurationId: 'icfg_neon'
+        }
+      ])
+
+      const printed = yield* output('--on-existing', 'reuse', '--only', 'neon')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(prompts).toEqual([])
+      expect(printed).not.toContain('manual:')
+      expect(recordFor(world, 'DATABASE_URL', 'preview')).toEqual([
+        expect.objectContaining({ id: 'neon-DATABASE_URL-preview' })
+      ])
       expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([
         expect.objectContaining({ value: 'postgres://acme-app-prod-pooler/neondb' })
       ])
