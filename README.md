@@ -341,7 +341,10 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
   confirm once connected and it checks again and carries on (still not connected: it shows the
   steps again). Declined, or without a terminal, it prints them as `manual:` lines with the rerun
   command and holds back Production's `DATABASE_URL`, because the integration refuses to connect
-  while Production or Development has one. Once Vercel's Neon integration has access to the project, the step
+  while Production or Development has one. Connected means both halves: Vercel's Neon integration
+  has access to the project (listed, or "All projects", which alone is not enough), and
+  `<repo>-dev` is connected in Neon (it has a `vercel-dev` or `preview/*` branch, or the
+  integration owns `DATABASE_URL*` records in the project). Once connected, the step
   removes the `DATABASE_URL*` (and `PG*`/`POSTGRES_*`) records the integration writes for
   Production and Development, and writes `<repo>-prod` to Production. Rerun `--only neon` after
   changing the integration's settings or rotating `<repo>-dev`'s role password, which makes Neon

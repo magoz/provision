@@ -270,6 +270,8 @@ const IntegrationConfiguration = Schema.Struct({
   projects: Schema.optional(Schema.NullOr(Schema.Array(Schema.String)))
 })
 
+export type IntegrationConfiguration = typeof IntegrationConfiguration.Type
+
 const IntegrationConfigurations = Schema.Union([
   Schema.Array(IntegrationConfiguration),
   Schema.Struct({ configurations: Schema.Array(IntegrationConfiguration) })

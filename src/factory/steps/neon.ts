@@ -33,7 +33,8 @@ import {
   listEnvRecords,
   listIntegrationConfigurations,
   recordTargets,
-  type EnvRecord
+  type EnvRecord,
+  type IntegrationConfiguration
 } from '../vercel-api.ts'
 
 /** Finds or creates a Neon project; returns its id and protected default branch (`None` in a dry run). */
@@ -107,8 +108,8 @@ const outsidePreview = (record: EnvRecord) =>
  * before it builds. It also writes Production and Development variables pointing at `<repo>-dev`;
  * those are removed (Production gets `<repo>-prod` back). Not connected yet: shows how, waits for
  * the operator to connect it and checks again; skipped (or no terminal), it prints how to finish.
- * Connected means the team's Neon integration has access to this Vercel project. Returns the
- * project's records as they stand afterwards.
+ * Connected is decided by {@link integrationState}. Returns the project's records as they stand
+ * afterwards.
  */
 const previewIntegration = (
   context: FactoryContext,
@@ -122,11 +123,11 @@ const previewIntegration = (
     const projectId = handle.project.id
     const manual = yield* ManualStep
     let current = records
-    let configurations = yield* listIntegrationConfigurations(teamId, 'neon')
+    let state = yield* integrationState(teamId, admin, projectId, current, sandbox)
     let problem = ''
 
-    while (!isConnected(configurations, projectId)) {
-      const steps = yield* connectSteps(context, admin, handle, current, sandbox)
+    while (state.status !== 'connected') {
+      const steps = yield* connectSteps(context, admin, handle, current, sandbox, state.status)
       const intro = `connect Neon's Vercel integration so each Preview branch gets its own database (preview/<git-branch>, copied from ${context.names.development}):`
       const confirmed = context.dryRun
         ? false
@@ -156,19 +157,15 @@ const previewIntegration = (
         return { connected: false, records: current }
       }
 
-      configurations = yield* listIntegrationConfigurations(teamId, 'neon')
       current = yield* listEnvRecords(teamId, projectId)
-      problem = `Neon's Vercel integration still has no access to ${handle.project.name}.\n`
+      state = yield* integrationState(teamId, admin, projectId, current, sandbox)
+      problem =
+        state.status === 'no-access'
+          ? `Neon's Vercel integration still has no access to ${handle.project.name}.\n`
+          : `Neon project ${context.names.development} is still not connected to ${handle.project.name}.\n`
     }
 
-    const configurationIds = new Set(configurations.map(configuration => configuration.id))
-    const owned = current.filter(
-      record =>
-        typeof record.configurationId === 'string' &&
-        configurationIds.has(record.configurationId) &&
-        databaseKey.test(record.key) &&
-        outsidePreview(record)
-    )
+    const owned = integrationRecords(state.configurations, current).filter(outsidePreview)
 
     if (owned.length > 0) {
       const keys = [...new Set(owned.map(record => record.key))].join(', ')
@@ -189,16 +186,58 @@ const previewIntegration = (
 const numbered = (lines: ReadonlyArray<string>) =>
   lines.map((line, index) => `    ${index + 1}. ${line}`)
 
-const isConnected = (
-  configurations: ReadonlyArray<{ readonly projects?: ReadonlyArray<string> | null | undefined }>,
-  projectId: string
-) =>
-  configurations.some(
-    configuration =>
-      configuration.projects === undefined ||
-      configuration.projects === null ||
-      configuration.projects.includes(projectId)
+/** Database records owned by one of the integration's configurations. */
+const integrationRecords = (
+  configurations: ReadonlyArray<IntegrationConfiguration>,
+  records: ReadonlyArray<EnvRecord>
+) => {
+  const ids = new Set(configurations.map(configuration => configuration.id))
+
+  return records.filter(
+    record =>
+      typeof record.configurationId === 'string' &&
+      ids.has(record.configurationId) &&
+      databaseKey.test(record.key)
   )
+}
+
+/**
+ * Whether Neon's Vercel integration serves this project. Vercel-side access (the project listed,
+ * or "All projects") is only half: `<repo>-dev` must also be connected in Neon. That leaves a
+ * `vercel-dev` branch there, Preview deploys add `preview/<git-branch>` branches, and the
+ * integration owns `DATABASE_URL*` records in the project.
+ */
+const integrationState = (
+  teamId: string,
+  admin: NeonAdmin,
+  projectId: string,
+  records: ReadonlyArray<EnvRecord>,
+  sandbox: Option.Option<{ readonly projectId: string }>
+) =>
+  Effect.gen(function* () {
+    const configurations = yield* listIntegrationConfigurations(teamId, 'neon')
+    const access = configurations.some(
+      configuration =>
+        configuration.projects === undefined ||
+        configuration.projects === null ||
+        configuration.projects.includes(projectId)
+    )
+
+    if (!access) return { status: 'no-access', configurations } as const
+
+    if (integrationRecords(configurations, records).length > 0) {
+      return { status: 'connected', configurations } as const
+    }
+
+    const branches = Option.isSome(sandbox)
+      ? yield* listBranches(admin, sandbox.value.projectId)
+      : []
+    const linked = branches.some(
+      branch => branch.name === 'vercel-dev' || branch.name.startsWith('preview/')
+    )
+
+    return { status: linked ? 'connected' : 'not-connected', configurations } as const
+  })
 
 /** How to connect the integration; lists the variables that would make it refuse first. */
 const connectSteps = (
@@ -206,7 +245,8 @@ const connectSteps = (
   admin: NeonAdmin,
   handle: ProjectHandle,
   records: ReadonlyArray<EnvRecord>,
-  sandbox: Option.Option<{ readonly projectId: string; readonly parentBranch: string | undefined }>
+  sandbox: Option.Option<{ readonly projectId: string; readonly parentBranch: string | undefined }>,
+  status: 'no-access' | 'not-connected'
 ) =>
   Effect.gen(function* () {
     const development = context.names.development
@@ -232,13 +272,17 @@ const connectSteps = (
       )
     ]
     return [
-      `Vercel → team → Integrations → Neon → Manage Access: add project ${project} (no Neon? Marketplace → Neon → Link Existing Neon Account)`,
+      ...(status === 'no-access'
+        ? [
+            `Vercel → team → Integrations → Neon → Manage Access: add project ${project} (no Neon? Marketplace → Neon → Link Existing Neon Account)`
+          ]
+        : []),
       ...(blocking.length === 0
         ? []
         : [
             `remove these first (the integration refuses to connect while they exist; running deployments keep theirs): cd ${context.appDirectory} && ${blocking.map(entry => `vercel env rm ${entry} --yes`).join(' && ')}`
           ]),
-      `Neon → project ${development} → Integrations → Vercel → connect ${connection}, Vercel project ${project}. After a failed attempt, delete the vercel-dev branch it leaves in ${development} before retrying`
+      `Neon → project ${development} → Integrations → Vercel → connect ${connection}, Vercel project ${project}, Preview branching (required even when Vercel gives Neon access to all projects). After a failed attempt, delete the vercel-dev branch it leaves in ${development} before retrying`
     ]
   })
 
