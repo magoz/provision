@@ -350,7 +350,8 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
   changing the integration's settings or rotating `<repo>-dev`'s role password, which makes Neon
   write its variables again. Apps should migrate in every build that has a database, previews
   included. If the connect dialog fails, delete the `vercel-dev` branch it leaves in
-  `<repo>-dev` before retrying; keep it once connected.
+  `<repo>-dev` before retrying (until then the step counts it as connected); keep it once
+  connected.
 - **Branch name.** A reused `<repo>-dev` project whose default branch has another name (Neon's
   default is `production`) gets it renamed to `baseline`; its id and data are unchanged.
 - **DNS.** If the domain is not yet pointed at Vercel, add the record shown under the project's

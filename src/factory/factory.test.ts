@@ -739,6 +739,38 @@ describe('provision factory', () => {
     )
   }
 
+  it.live('treats a Preview record owned by the integration as connected and keeps it', () =>
+    Effect.gen(function* () {
+      const { world, run, output, prompts } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      const projectId = [...world.vercel.projects.values()][0]?.id ?? ''
+      world.vercel.envs.set(projectId, [
+        ...(world.vercel.envs.get(projectId) ?? []),
+        {
+          id: 'neon-DATABASE_URL-preview',
+          key: 'DATABASE_URL',
+          value: 'postgres://acme-app-dev-preview/neondb',
+          type: 'encrypted',
+          target: ['preview'],
+          customEnvironmentIds: [],
+          configurationId: 'icfg_neon'
+        }
+      ])
+
+      const printed = yield* output('--on-existing', 'reuse', '--only', 'neon')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(prompts).toEqual([])
+      expect(printed).not.toContain('manual:')
+      expect(recordFor(world, 'DATABASE_URL', 'preview')).toEqual([
+        expect.objectContaining({ id: 'neon-DATABASE_URL-preview' })
+      ])
+      expect(recordFor(world, 'DATABASE_URL', 'production')).toEqual([
+        expect.objectContaining({ value: 'postgres://acme-app-prod-pooler/neondb' })
+      ])
+    })
+  )
+
   it.live("renames a reused dev project's default branch to baseline, keeping its id", () =>
     Effect.gen(function* () {
       const { world, run } = yield* setup()

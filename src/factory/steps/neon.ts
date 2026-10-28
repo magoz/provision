@@ -282,7 +282,7 @@ const connectSteps = (
         : [
             `remove these first (the integration refuses to connect while they exist; running deployments keep theirs): cd ${context.appDirectory} && ${blocking.map(entry => `vercel env rm ${entry} --yes`).join(' && ')}`
           ]),
-      `Neon → project ${development} → Integrations → Vercel → connect ${connection}, Vercel project ${project}, Preview branching (required even when Vercel gives Neon access to all projects). After a failed attempt, delete the vercel-dev branch it leaves in ${development} before retrying`
+      `Neon → project ${development} → Integrations → Vercel → connect ${connection}, Vercel project ${project}, Preview branching (required even when Vercel gives Neon access to all projects). After a failed attempt, delete the vercel-dev branch it leaves in ${development} before retrying (provision counts that branch as connected)`
     ]
   })
 
