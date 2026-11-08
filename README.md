@@ -225,16 +225,16 @@ Creates what the repository declares (`provision.factory.steps`, narrowed by `--
 checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Vercel project),
 `<repo>-dev` (pre-production), and `<repo>-prod` (production).
 
-| Step      | Creates                                                                                                                                                 | Vercel env vars                                                         |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link (`.vercel/project.json` only; `.vercel` must be git-ignored)    | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                              |
-| `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production)    |
-| `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                             | `R2_*`                                                                  |
-| `upstash` | `<repo>-dev`/`-prod` teams                                                                                                                              | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups)) |
-| `resend`  | sending-only keys (any verified domain)                                                                                                                 | `RESEND_API_KEY`                                                        |
-| `reports` | report tokens from the factory's receiver                                                                                                               | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                          |
-| `secrets` | the secrets named with `--secret` (generated, never shown)                                                                                              | those, plus `AUTH_EMAIL_FROM` when a sender is known                    |
-| `domain`  | attaches `--domain` to the project                                                                                                                      | —                                                                       |
+| Step      | Creates                                                                                                                                                                  | Vercel env vars                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link (`.vercel/project.json` only; `.vercel` must be git-ignored)                     | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                                           |
+| `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration (guided connect) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production, once connected) |
+| `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                                              | `R2_*`                                                                               |
+| `upstash` | `<repo>-dev`/`-prod` teams                                                                                                                                               | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups))              |
+| `resend`  | sending-only keys (any verified domain)                                                                                                                                  | `RESEND_API_KEY`                                                                     |
+| `reports` | report tokens from the factory's receiver                                                                                                                                | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                                       |
+| `secrets` | the secrets named with `--secret` (generated, never shown)                                                                                                               | those, plus `AUTH_EMAIL_FROM` when a sender is known                                 |
+| `domain`  | attaches `--domain` to the project                                                                                                                                       | —                                                                                    |
 
 - **Environments.** Pre-production values go to Development, Preview, and `test`; production values
   go to Production and are Sensitive. Each side gets its own keys and secrets.
@@ -284,8 +284,10 @@ after a new sandbox profile, otherwise an env-file refresh (`--skip-install --sk
   create Neon project acme-app-dev with protected branch baseline
   create Neon key acme-app-dev-sandbox-branch-manager
   write SANDBOX_DB_NEON_API_KEY, SANDBOX_DB_NEON_PROJECT_ID, SANDBOX_DB_PARENT_BRANCH_ID to Vercel (Development)
+  remove the Neon integration's DATABASE_URL, DATABASE_URL_UNPOOLED (production, development) from Vercel
   create Neon project acme-app-prod with protected branch production
   write DATABASE_URL, DATABASE_URL_UNPOOLED to Vercel (Production)
+  manual: check the first Preview deployment: it should create branch preview/<git-branch> in acme-app-dev, and its build should run the migrations
 ```
 
 ### Existing resources
@@ -337,21 +339,38 @@ provision factory --checkout ~/src/acme-app --domain app.acme.com --only reports
 - **Preview databases.** Each Preview branch gets its own database from Neon's Vercel integration
   (Neon-managed, connected to `<repo>-dev`): a branch `preview/<git-branch>` copied from
   `baseline`, handed to the branch's deployments before they build. Only an integration can do
-  that, so you connect it once per project. Until then the `neon` step shows the steps and waits:
-  confirm once connected and it checks again and carries on (still not connected: it shows the
-  steps again). Declined, or without a terminal, it prints them as `manual:` lines with the rerun
-  command and holds back Production's `DATABASE_URL`, because the integration refuses to connect
-  while Production or Development has one. Connected means both halves: Vercel's Neon integration
-  has access to the project (listed, or "All projects", which alone is not enough), and
-  `<repo>-dev` is connected in Neon (it has a `vercel-dev` or `preview/*` branch, or the
-  integration owns `DATABASE_URL*` records in the project). Once connected, the step
-  removes the `DATABASE_URL*` (and `PG*`/`POSTGRES_*`) records the integration writes for
-  Production and Development, and writes `<repo>-prod` to Production. Rerun `--only neon` after
-  changing the integration's settings or rotating `<repo>-dev`'s role password, which makes Neon
-  write its variables again. Apps should migrate in every build that has a database, previews
-  included. If the connect dialog fails, delete the `vercel-dev` branch it leaves in
-  `<repo>-dev` before retrying (until then the step counts it as connected); keep it once
-  connected.
+  that, so you connect it once per project, in two places: Vercel gives the integration access to
+  the project (listed, or "All projects", which alone connects nothing), and in Neon you connect
+  `<repo>-dev` to the project. Until both are done the `neon` step guides you in one run:
+  1. Production or Development `DATABASE_URL*`, `PG*`, or `POSTGRES_*` variables make the
+     integration refuse to connect. Once you agree, the step removes them (Production gets
+     `<repo>-prod` back afterwards; running deployments keep theirs). It never touches a variable
+     that also serves Preview or `test`; it asks you to take Production and Development off it.
+  2. It shows the Neon console step with the names to pick (Vercel project, database, role) and
+     waits. Turn on **Create a branch for your development environment**: its `vercel-dev` branch
+     is how later runs know `<repo>-dev` is connected.
+  3. Once you confirm, it checks what the connection left and says what is missing: nothing (not
+     connected yet); the integration's variables but no `vercel-dev` (the option was off:
+     disconnect and connect again with it on); or `vercel-dev` but no variables (the attempt
+     failed: it offers to delete that branch, a fresh copy of `baseline` with no app data, before
+     you retry).
+  4. Connected: it removes the variables the integration wrote for Production and Development,
+     writes `<repo>-prod` to Production, and prints a check: the first Preview deployment should
+     create `preview/<git-branch>` in `<repo>-dev`, and its build should run the migrations.
+
+  Production's `DATABASE_URL` is never written before the connection exists. Without a terminal,
+  or when you decline the removal, the step removes nothing, prints the steps as `manual:` lines
+  with the rerun command, and holds Production back. Declining after the removal leaves
+  Production without a `DATABASE_URL` until a rerun connects (the `manual:` lines say so). A
+  connection made without the development-branch option is treated like step 3: the step
+  removes the integration's variables and asks you to connect again. Neither Neon's nor Vercel's API reports which Vercel
+  project a Neon project is connected to, so the step reads what connecting leaves: the
+  integration's variables, `vercel-dev`, or `preview/*` branches in `<repo>-dev`. A `vercel-dev`
+  left by a failed attempt made outside `provision` therefore reads as connected; delete it in
+  Neon before rerunning. Rerun `--only neon` after changing the integration's settings or rotating
+  `<repo>-dev`'s role password, which makes Neon write its variables again. Apps should migrate in
+  every build that has a database, previews included. Keep `vercel-dev` once connected.
+
 - **Branch name.** A reused `<repo>-dev` project whose default branch has another name (Neon's
   default is `production`) gets it renamed to `baseline`; its id and data are unchanged.
 - **DNS.** If the domain is not yet pointed at Vercel, add the record shown under the project's

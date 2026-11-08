@@ -347,6 +347,12 @@ const neon = (world: FakeWorld, method: string, url: URL, body: unknown) => {
     return json({ databases: [{ name: 'neondb', owner_name: 'neondb_owner' }] })
   }
 
+  if (branch !== undefined && method === 'DELETE') {
+    project.branches.splice(project.branches.indexOf(branch), 1)
+
+    return json({ branch })
+  }
+
   if (branch !== undefined && method === 'PATCH') {
     const update = field(body, 'branch')
     const name = text(update, 'name')

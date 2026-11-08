@@ -189,6 +189,14 @@ written straight to Vercel). If they skipped it, give them
 `provision factory --checkout <checkout> --domain <host> --only upstash --on-existing reuse`.
 Never ask the human to paste QStash values, or any other credential, into the chat.
 
+Preview databases need Neon's Vercel integration connected by the human, so run the `neon` step
+in their terminal the first time. It removes the Production and Development database variables
+that block the integration (after they agree), shows the Neon console step (with "Create a branch
+for your development environment" on), checks what the connection left, and only then writes
+Production's `DATABASE_URL`. Without a terminal it changes nothing in Vercel and prints `manual:`
+lines with the rerun command: relay them. After connecting, relay its `manual: check the first
+Preview deployment` line.
+
 `--on-existing`: `ask` (default, prompts), `reuse` (change nothing that exists), `overwrite`
 (rotate keys and regenerate secrets: invalidates sessions and encrypted data; only on the human's
 explicit request), `abort`. Data (databases, buckets, teams) is never deleted or replaced.

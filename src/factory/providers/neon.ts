@@ -116,6 +116,21 @@ export const renameBranch = (admin: NeonAdmin, projectId: string, branchId: stri
     })
   )
 
+/** Deletes a non-default branch and its data (already gone: nothing to do). */
+export const deleteBranch = (admin: NeonAdmin, projectId: string, branchId: string) =>
+  requestJson(
+    'Neon branch deletion',
+    `${API_ROOT}/projects/${encodeURIComponent(projectId)}/branches/${encodeURIComponent(branchId)}`,
+    Schema.Unknown,
+    { method: 'DELETE', headers: headers(admin), allowNotFound: true }
+  ).pipe(
+    Effect.retry({
+      schedule: whileLocked,
+      while: error => error.status === 423 || error.status === 409
+    }),
+    Effect.asVoid
+  )
+
 export const listDatabases = (admin: NeonAdmin, projectId: string, branchId: string) =>
   requestJsonRequired(
     'Neon database listing',
