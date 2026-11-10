@@ -20,7 +20,7 @@ import {
 
 const variableKey = 'AI_GATEWAY_API_KEY'
 
-/** The key named `name`; two keys share a name only while a rotation is unfinished. */
+/** The id of the key named `name`; two keys share a name only while a rotation is unfinished. */
 const keyIdNamed = (keys: ReadonlyArray<GatewayKey>, name: string) => {
   const matches = keys.filter(key => key.name === name)
 
@@ -71,6 +71,8 @@ export const aiGatewayStep = (context: FactoryContext) =>
 
       // A variable set from some other key: replacing it moves the spend, so it is the
       // operator's call like any existing key.
+      const complete = environmentsHaveKeys(records, target.group, [variableKey])
+
       if (
         Option.isNone(existing) &&
         groupKeyState(records, target.group, [variableKey]) !== 'none'
@@ -78,11 +80,12 @@ export const aiGatewayStep = (context: FactoryContext) =>
         const decision = yield* decide(
           context,
           'key',
-          `${variableKey} in ${target.group.label}, set without ${description}`
+          `${variableKey} in ${target.group.label}, set without ${description}` +
+            (complete ? '' : ` (missing from part of ${target.group.label})`)
         )
 
         if (decision === 'reuse') {
-          if (!context.dryRun && !environmentsHaveKeys(records, target.group, [variableKey])) {
+          if (!context.dryRun && !complete) {
             return yield* factoryError(
               `${variableKey} is missing from part of ${target.group.label} and its key is unknown; rerun with --on-existing=overwrite to create ${target.name}`
             )
@@ -97,7 +100,7 @@ export const aiGatewayStep = (context: FactoryContext) =>
       yield* ensureScopedKey(context, {
         description,
         existing,
-        vercelComplete: environmentsHaveKeys(records, target.group, [variableKey]),
+        vercelComplete: complete,
         createAndWrite: Effect.gen(function* () {
           const key = yield* createGatewayKey(teamId, target.name)
 

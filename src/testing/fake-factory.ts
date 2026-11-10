@@ -28,6 +28,8 @@ export interface FakeWorld {
     readonly integrations: Array<{ id: string; slug: string; projects: Array<string> | null }>
     /** The team's API keys; `value` is what creation returned once. */
     readonly apiKeys: Array<{ id: string; name: string; purpose: string; value: string }>
+    /** When set, deleting an API key fails (500). */
+    failKeyDeletes: boolean
   }
   readonly neon: {
     readonly projects: Array<{
@@ -59,7 +61,8 @@ export const makeWorld = (): FakeWorld => ({
     envs: new Map(),
     domains: new Map(),
     integrations: [{ id: 'icfg_neon', slug: 'neon', projects: null }],
-    apiKeys: []
+    apiKeys: [],
+    failKeyDeletes: false
   },
   neon: { projects: [], apiKeys: [] },
   cloudflare: { buckets: new Map(), tokens: [] },
@@ -144,6 +147,8 @@ const vercelApi = (world: FakeWorld, invocation: Invocation): ScriptResult => {
   const apiKey = /^\/api-keys\/([^/]+)$/.exec(path)?.[1]
 
   if (apiKey !== undefined && method === 'DELETE') {
+    if (world.vercel.failKeyDeletes) return { exitCode: 1, stderr: 'Error: Internal (500)' }
+
     const index = world.vercel.apiKeys.findIndex(key => key.id === apiKey)
 
     if (index < 0) return missing

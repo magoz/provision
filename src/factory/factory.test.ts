@@ -125,6 +125,9 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
             ...console,
             log: (...values: ReadonlyArray<unknown>) => {
               lines.push(values.map(String).join(' '))
+            },
+            error: (...values: ReadonlyArray<unknown>) => {
+              lines.push(values.map(String).join(' '))
             }
           })
         )
@@ -1350,9 +1353,31 @@ describe('provision factory ai-gateway', () => {
     })
   )
 
+  it.live('says which key to remove when removing it fails too', () =>
+    Effect.gen(function* () {
+      const { world, invocations, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      addRecords(world, [
+        { key: gatewayVariable, target: ['preview', 'development'], value: 'vck_elsewhere' }
+      ])
+      world.vercel.failKeyDeletes = true
+
+      const printed = yield* output('--on-existing', 'overwrite', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBe(2)
+      const [left] = gatewayKey(world, 'acme-app')
+      expect(block(printed)).toContain(
+        `manual: remove AI Gateway key acme-app (${left?.id}): Vercel refused its variable and the removal failed`
+      )
+      // The original failure is what the run reports.
+      expect(printed).toContain('has a record that also targets environments outside')
+      expectNoSecret(printed, invocations, world)
+    })
+  )
+
   it.live('stops when an unfinished rotation left two keys with one name', () =>
     Effect.gen(function* () {
-      const { world, run } = yield* setup()
+      const { world, run, output } = yield* setup()
       yield* run('--on-existing', 'abort', '--only', 'vercel')
       addManualSetup(world)
       world.vercel.apiKeys.push({
@@ -1363,9 +1388,11 @@ describe('provision factory ai-gateway', () => {
       })
       const before = world.mutations.length
 
-      yield* run('--on-existing', 'overwrite', '--only', 'ai-gateway')
+      const printed = yield* output('--on-existing', 'overwrite', '--only', 'ai-gateway')
 
       expect(process.exitCode).toBe(2)
+      expect(printed).toContain('several AI Gateway keys are named acme-app')
+      expect(printed).toContain('remove all but one by id')
       expect(world.mutations.slice(before)).toEqual([])
     })
   )
@@ -1379,12 +1406,19 @@ describe('provision factory ai-gateway', () => {
       ])
       const before = world.mutations.length
 
+      const planned = yield* output('--dry-run', '--only', 'ai-gateway')
+      expect(block(planned)).toContain('(missing from part of Production, Preview)')
+
       // Preview lacks it and its key is unknown: only overwrite can complete it.
-      for (const policy of ['abort', 'reuse']) {
-        process.exitCode = undefined
-        yield* run('--on-existing', policy, '--only', 'ai-gateway')
-        expect(process.exitCode).toBe(2)
-      }
+      process.exitCode = undefined
+      yield* run('--on-existing', 'abort', '--only', 'ai-gateway')
+      expect(process.exitCode).toBe(2)
+      process.exitCode = undefined
+      const refused = yield* output('--on-existing', 'reuse', '--only', 'ai-gateway')
+      expect(process.exitCode).toBe(2)
+      expect(refused).toContain(
+        'AI_GATEWAY_API_KEY is missing from part of Production, Preview and its key is unknown'
+      )
       expect(world.mutations.slice(before)).toEqual([])
 
       addRecords(world, [

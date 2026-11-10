@@ -156,8 +156,9 @@ Don't assume a template: read the code, then compare with Vercel.
 4. **Pick the steps** with `--only`: `vercel` always, plus the steps whose variables the code reads,
    plus `domain` when the production host is known. Leave out steps the app doesn't use.
 5. **Check conflicts** before handing over: a step stops if one Vercel record of its variable spans
-   pre-production and production (`… has a record that also targets environments outside …`); for
-   `AI_GATEWAY_API_KEY`, also one record spanning Development and Preview.
+   pre-production and production (`… has a record that also targets environments outside …`).
+   `AI_GATEWAY_API_KEY` splits differently: Production with Preview is fine, but one record
+   spanning Development and Preview or Production stops it.
    Tell the human which record to delete or split first.
 
 Then show the human what you found (variables, where each comes from, what already exists) and
