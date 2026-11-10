@@ -16,6 +16,7 @@ import {
 import { decodeCredentials, readItemFields, type FactoryCredentials } from './onepassword.ts'
 import { resolveOpAuth } from './op-credential.ts'
 import { readRegistry, type FactoryEntry, type Registry } from './registry.ts'
+import { aiGatewayStep } from './steps/ai-gateway.ts'
 import { domainStep } from './steps/domain.ts'
 import { neonStep } from './steps/neon.ts'
 import { r2Step } from './steps/r2.ts'
@@ -28,6 +29,7 @@ import { vercelStep } from './steps/vercel.ts'
 const steps = {
   vercel: vercelStep,
   neon: neonStep,
+  'ai-gateway': aiGatewayStep,
   r2: r2Step,
   upstash: upstashStep,
   resend: resendStep,

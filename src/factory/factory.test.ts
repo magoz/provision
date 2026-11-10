@@ -125,6 +125,9 @@ const setup = (fields: Record<string, string> = itemFields, owner = 'acme') =>
             ...console,
             log: (...values: ReadonlyArray<unknown>) => {
               lines.push(values.map(String).join(' '))
+            },
+            error: (...values: ReadonlyArray<unknown>) => {
+              lines.push(values.map(String).join(' '))
             }
           })
         )
@@ -175,6 +178,7 @@ const addRecords = (
     readonly key: string
     readonly target: ReadonlyArray<string>
     readonly value: string
+    readonly type?: string
     readonly configurationId?: string
   }>
 ) => {
@@ -1093,6 +1097,376 @@ describe('provision factory', () => {
 
       expect(process.exitCode).toBe(2)
       expect(invocations.filter(invocation => invocation.command !== 'git')).toEqual([])
+    })
+  )
+})
+
+const gatewayVariable = 'AI_GATEWAY_API_KEY'
+const deployedKey = 'AI Gateway key acme-app (AI_GATEWAY_API_KEY: Production, Preview, Sensitive)'
+const localKey = 'AI Gateway key acme-app-dev (AI_GATEWAY_API_KEY: Development)'
+
+const gatewayKey = (world: FakeWorld, name: string) =>
+  world.vercel.apiKeys.filter(key => key.name === name)
+
+/** Keys of other projects on the team, enough to span several listing pages. */
+const addOtherKeys = (world: FakeWorld) => {
+  for (const name of ['other-app', 'other-app-dev', 'acme-app-staging']) {
+    world.vercel.apiKeys.push({
+      id: `key_${name}`,
+      name,
+      purpose: 'ai-gateway',
+      value: `vck_${name}`
+    })
+  }
+}
+
+/**
+ * What a setup by hand leaves: both keys (`vercel ai-gateway api-keys create`) and one record per
+ * environment (`vercel env add`).
+ */
+const addManualSetup = (
+  world: FakeWorld,
+  options: { readonly withoutPreview?: boolean; readonly withoutDevelopment?: boolean } = {}
+) => {
+  addOtherKeys(world)
+  world.vercel.apiKeys.push({
+    id: 'key_prod',
+    name: 'acme-app',
+    purpose: 'ai-gateway',
+    value: 'vck_prod'
+  })
+
+  if (options.withoutDevelopment !== true) {
+    world.vercel.apiKeys.push({
+      id: 'key_dev',
+      name: 'acme-app-dev',
+      purpose: 'ai-gateway',
+      value: 'vck_dev'
+    })
+  }
+
+  addRecords(world, [
+    { key: gatewayVariable, target: ['production'], value: 'vck_prod', type: 'sensitive' },
+    ...(options.withoutPreview === true
+      ? []
+      : [{ key: gatewayVariable, target: ['preview'], value: 'vck_prod', type: 'sensitive' }]),
+    ...(options.withoutDevelopment === true
+      ? []
+      : [{ key: gatewayVariable, target: ['development'], value: 'vck_dev', type: 'encrypted' }])
+  ])
+}
+
+/** The `[ai-gateway]` block a run printed. */
+const block = (printed: string) => printed.split('[ai-gateway]\n')[1]?.split('\n\n')[0] ?? ''
+
+const expectNoSecret = (
+  printed: string,
+  invocations: ReadonlyArray<Invocation>,
+  world: FakeWorld
+) => {
+  const argv = JSON.stringify(invocations.map(invocation => invocation.args))
+
+  for (const key of world.vercel.apiKeys) {
+    expect(printed).not.toContain(key.value)
+    expect(argv).not.toContain(key.value)
+  }
+}
+
+describe('provision factory ai-gateway', () => {
+  it.live('creates both keys and writes AI_GATEWAY_API_KEY without printing them', () =>
+    Effect.gen(function* () {
+      const { world, invocations, output } = yield* setup()
+      addOtherKeys(world)
+
+      const printed = yield* output('--on-existing', 'abort', '--only', 'vercel,ai-gateway')
+
+      expect(process.exitCode).toBeUndefined()
+      const [deployed] = gatewayKey(world, 'acme-app')
+      const [local] = gatewayKey(world, 'acme-app-dev')
+      expect(gatewayKey(world, 'acme-app')).toHaveLength(1)
+      expect(gatewayKey(world, 'acme-app-dev')).toHaveLength(1)
+      expect(records(world).filter(record => record.key === gatewayVariable)).toEqual([
+        expect.objectContaining({
+          value: deployed?.value,
+          type: 'sensitive',
+          target: ['production', 'preview'],
+          customEnvironmentIds: []
+        }),
+        expect.objectContaining({
+          value: local?.value,
+          type: 'encrypted',
+          target: ['development'],
+          customEnvironmentIds: []
+        })
+      ])
+      expect(deployed?.value).not.toBe(local?.value)
+
+      const created = invocations
+        .filter(invocation => invocation.args[1]?.startsWith('/v1/api-keys?teamId=') === true)
+        .map(invocation => JSON.parse(invocation.input ?? 'null'))
+      expect(created).toEqual([
+        { purpose: 'ai-gateway', name: 'acme-app' },
+        { purpose: 'ai-gateway', name: 'acme-app-dev' }
+      ])
+
+      expect(block(printed).split('\n')).toEqual([
+        `  create ${deployedKey}`,
+        '  write AI_GATEWAY_API_KEY to Vercel (Production, Preview)',
+        `  create ${localKey}`,
+        '  write AI_GATEWAY_API_KEY to Vercel (Development)'
+      ])
+      expect(next(printed)).toMatch(/next: provision env --repo \S+ --skip-install --skip-setup$/)
+      expectNoSecret(printed, invocations, world)
+    })
+  )
+
+  it.live('only reports reuse for keys and variables set up by hand', () =>
+    Effect.gen(function* () {
+      const { world, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      addManualSetup(world)
+      const before = world.mutations.length
+
+      const printed = yield* output('--on-existing', 'reuse', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(world.mutations.slice(before)).toEqual([])
+      expect(block(printed).split('\n')).toEqual([
+        `  reusing ${deployedKey}`,
+        `  reusing ${localKey}`
+      ])
+      expect(next(printed)).toBeUndefined()
+    })
+  )
+
+  it.live('creates only the missing key when a run stopped partway', () =>
+    Effect.gen(function* () {
+      const { world, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      addManualSetup(world, { withoutDevelopment: true })
+
+      const printed = yield* output('--on-existing', 'reuse', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(gatewayKey(world, 'acme-app')).toEqual([expect.objectContaining({ id: 'key_prod' })])
+      expect(gatewayKey(world, 'acme-app-dev')).toHaveLength(1)
+      expect(recordFor(world, gatewayVariable, 'development')[0]?.value).toBe(
+        gatewayKey(world, 'acme-app-dev')[0]?.value
+      )
+      expect(block(printed).split('\n')).toEqual([
+        `  reusing ${deployedKey}`,
+        `  create ${localKey}`,
+        '  write AI_GATEWAY_API_KEY to Vercel (Development)'
+      ])
+    })
+  )
+
+  it.live('rotates a key whose value Vercel lacks only on overwrite', () =>
+    Effect.gen(function* () {
+      const { world, invocations, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      addManualSetup(world, { withoutPreview: true })
+      const before = world.mutations.length
+
+      for (const policy of ['reuse', 'abort']) {
+        process.exitCode = undefined
+        yield* run('--on-existing', policy, '--only', 'ai-gateway')
+        expect(process.exitCode).toBe(2)
+      }
+
+      expect(world.mutations.slice(before)).toEqual([])
+
+      const dryRun = yield* output('--dry-run', '--only', 'ai-gateway')
+      expect(block(dryRun)).toContain(
+        `exists: ${deployedKey} (its value is missing from Vercel and cannot be recovered)`
+      )
+
+      process.exitCode = undefined
+      const printed = yield* output('--on-existing', 'overwrite', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBeUndefined()
+      const [rotated] = gatewayKey(world, 'acme-app')
+      expect(gatewayKey(world, 'acme-app')).toHaveLength(1)
+      expect(rotated?.id).not.toBe('key_prod')
+      expect(records(world).filter(record => record.key === gatewayVariable)).toEqual([
+        expect.objectContaining({ target: ['production', 'preview'], value: rotated?.value }),
+        expect.objectContaining({
+          target: ['development'],
+          value: gatewayKey(world, 'acme-app-dev')[0]?.value
+        })
+      ])
+      // --on-existing applies to every key the step handles, complete ones included.
+      expect(gatewayKey(world, 'acme-app-dev')).toHaveLength(1)
+      expect(block(printed)).toContain(`rotate ${localKey}`)
+
+      // The replacement is created and written before the old key is removed.
+      const mutations = world.mutations.slice(before)
+      const removed = mutations.indexOf('vercel DELETE /api-keys/key_prod')
+      const created = mutations.indexOf('vercel POST /api-keys')
+      const written = mutations.indexOf(`vercel POST /projects/${projectIdOf(world)}/env`)
+      expect([created, written].every(index => index >= 0 && index < removed)).toBe(true)
+      expectNoSecret(printed, invocations, world)
+    })
+  )
+
+  it.live('rotates both keys on overwrite, removing the old ones', () =>
+    Effect.gen(function* () {
+      const { world, invocations, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel,ai-gateway')
+      const previous = world.vercel.apiKeys.map(key => key.id)
+
+      const printed = yield* output('--on-existing', 'overwrite', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(world.vercel.apiKeys.map(key => key.name)).toEqual(['acme-app', 'acme-app-dev'])
+      expect(world.vercel.apiKeys.some(key => previous.includes(key.id))).toBe(false)
+      expect(recordFor(world, gatewayVariable, 'production')[0]?.value).toBe(
+        gatewayKey(world, 'acme-app')[0]?.value
+      )
+      expect(recordFor(world, gatewayVariable, 'development')[0]?.value).toBe(
+        gatewayKey(world, 'acme-app-dev')[0]?.value
+      )
+      expect(records(world).filter(record => record.key === gatewayVariable)).toHaveLength(2)
+      expectNoSecret(printed, invocations, world)
+    })
+  )
+
+  it.live('removes a key it created when Vercel refuses the variable', () =>
+    Effect.gen(function* () {
+      const { world, run } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      // One record serving Preview and Development: replacing it would change Development too.
+      addRecords(world, [
+        { key: gatewayVariable, target: ['preview', 'development'], value: 'vck_elsewhere' }
+      ])
+      const before = world.mutations.length
+
+      yield* run('--on-existing', 'overwrite', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBe(2)
+      const mutations = world.mutations.slice(before)
+      expect(mutations[0]).toBe('vercel POST /api-keys')
+      expect(mutations[1]).toMatch(/^vercel DELETE \/api-keys\/key_\d+$/)
+      expect(mutations).toHaveLength(2)
+      expect(world.vercel.apiKeys).toEqual([])
+      expect(recordFor(world, gatewayVariable, 'preview')[0]?.value).toBe('vck_elsewhere')
+    })
+  )
+
+  it.live('says which key to remove when removing it fails too', () =>
+    Effect.gen(function* () {
+      const { world, invocations, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      addRecords(world, [
+        { key: gatewayVariable, target: ['preview', 'development'], value: 'vck_elsewhere' }
+      ])
+      world.vercel.failKeyDeletes = true
+
+      const printed = yield* output('--on-existing', 'overwrite', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBe(2)
+      const [left] = gatewayKey(world, 'acme-app')
+      expect(block(printed)).toContain(
+        `manual: remove AI Gateway key acme-app (${left?.id}): Vercel refused its variable and the removal failed`
+      )
+      // The original failure is what the run reports.
+      expect(printed).toContain('has a record that also targets environments outside')
+      expectNoSecret(printed, invocations, world)
+    })
+  )
+
+  it.live('stops when an unfinished rotation left two keys with one name', () =>
+    Effect.gen(function* () {
+      const { world, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      addManualSetup(world)
+      world.vercel.apiKeys.push({
+        id: 'key_prod_new',
+        name: 'acme-app',
+        purpose: 'ai-gateway',
+        value: 'vck_prod_new'
+      })
+      const before = world.mutations.length
+
+      const printed = yield* output('--on-existing', 'overwrite', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBe(2)
+      expect(printed).toContain('several AI Gateway keys are named acme-app')
+      expect(printed).toContain('remove all but one by id')
+      expect(world.mutations.slice(before)).toEqual([])
+    })
+  )
+
+  it.live('replaces a variable set from another key only when --on-existing says so', () =>
+    Effect.gen(function* () {
+      const { world, run, output } = yield* setup()
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      addRecords(world, [
+        { key: gatewayVariable, target: ['production'], value: 'vck_other', type: 'sensitive' }
+      ])
+      const before = world.mutations.length
+
+      const planned = yield* output('--dry-run', '--only', 'ai-gateway')
+      expect(block(planned)).toContain('(missing from part of Production, Preview)')
+
+      // Preview lacks it and its key is unknown: only overwrite can complete it.
+      process.exitCode = undefined
+      yield* run('--on-existing', 'abort', '--only', 'ai-gateway')
+      expect(process.exitCode).toBe(2)
+      process.exitCode = undefined
+      const refused = yield* output('--on-existing', 'reuse', '--only', 'ai-gateway')
+      expect(process.exitCode).toBe(2)
+      expect(refused).toContain(
+        'AI_GATEWAY_API_KEY is missing from part of Production, Preview and its key is unknown'
+      )
+      expect(world.mutations.slice(before)).toEqual([])
+
+      addRecords(world, [
+        { key: gatewayVariable, target: ['preview'], value: 'vck_other', type: 'sensitive' }
+      ])
+      process.exitCode = undefined
+      const reused = yield* output('--on-existing', 'reuse', '--only', 'ai-gateway')
+      expect(process.exitCode).toBeUndefined()
+      expect(block(reused).split('\n')[0]).toBe(
+        '  reusing AI_GATEWAY_API_KEY in Production, Preview'
+      )
+      expect(gatewayKey(world, 'acme-app')).toEqual([])
+      expect(recordFor(world, gatewayVariable, 'production')[0]?.value).toBe('vck_other')
+      // The development side had nothing, so its key was created.
+      expect(gatewayKey(world, 'acme-app-dev')).toHaveLength(1)
+
+      yield* run('--on-existing', 'overwrite', '--only', 'ai-gateway')
+      expect(process.exitCode).toBeUndefined()
+      expect(recordFor(world, gatewayVariable, 'preview')).toEqual([
+        expect.objectContaining({
+          target: ['production', 'preview'],
+          value: gatewayKey(world, 'acme-app')[0]?.value
+        })
+      ])
+    })
+  )
+
+  it.live('lists planned key names and environments in a dry run', () =>
+    Effect.gen(function* () {
+      const { world, run, output } = yield* setup()
+
+      const fresh = yield* output('--dry-run', '--only', 'vercel,ai-gateway')
+      expect(block(fresh).split('\n')).toEqual([
+        `  would create ${deployedKey} after the vercel step creates the project`,
+        `  would create ${localKey} after the vercel step creates the project`
+      ])
+
+      yield* run('--on-existing', 'abort', '--only', 'vercel')
+      const before = world.mutations.length
+      const planned = yield* output('--dry-run', '--only', 'ai-gateway')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(world.mutations.slice(before)).toEqual([])
+      expect(world.vercel.apiKeys).toEqual([])
+      expect(block(planned).split('\n')).toEqual([
+        `  would create ${deployedKey}`,
+        `  would create ${localKey}`
+      ])
     })
   )
 })

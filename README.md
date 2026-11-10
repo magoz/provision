@@ -2,9 +2,9 @@
 
 One CLI to take a web project from an empty GitHub repository to a running local checkout:
 
-- **`provision factory`** creates the project's provider resources (Vercel, Neon, Cloudflare R2,
-  Upstash, Resend) with admin keys kept in 1Password, mints keys scoped to the project, and writes
-  them to the project's Vercel environment variables.
+- **`provision factory`** creates the project's provider resources (Vercel, Vercel AI Gateway,
+  Neon, Cloudflare R2, Upstash, Resend) with admin keys kept in 1Password, mints keys scoped to the
+  project, and writes them to the project's Vercel environment variables.
 - **`provision env`** makes a checkout runnable: installs dependencies, links Vercel, pulls env
   files, creates disposable databases, and runs the repository's setup commands.
 - **`provision db`** manages those disposable Neon databases.
@@ -76,7 +76,7 @@ Repositories declare their needs in the root `package.json`. Everything is optio
     "appDir": "apps/web", // monorepo app directory; default "."
     "setup": ["pnpm db:migrate"], // run by `provision env` after provisioning
     "factory": {
-      "steps": ["vercel", "neon", "r2", "resend", "secrets"], // default: all steps
+      "steps": ["vercel", "neon", "ai-gateway", "r2", "resend", "secrets"], // default: all steps
       "neon": { "sandboxParent": "empty-baseline" } // or "existing-branch"
     }
   }
@@ -216,7 +216,8 @@ Revoke immediately if the host may be compromised.
 ```bash
 provision factory [--checkout <repo>] --domain <production-host>
                   [--sender-name <name>] [--email-from <address>]
-                  [--factory <name>] [--only vercel,neon,r2,upstash,resend,reports,secrets,domain]
+                  [--factory <name>]
+                  [--only vercel,neon,ai-gateway,r2,upstash,resend,reports,secrets,domain]
                   [--on-existing ask|reuse|overwrite|abort] [--neon-parent-branch <id>]
                   [--secret NAME[=base64-<bytes>|hex-<bytes>|vapid]]... [--dry-run]
 ```
@@ -225,19 +226,30 @@ Creates what the repository declares (`provision.factory.steps`, narrowed by `--
 checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Vercel project),
 `<repo>-dev` (pre-production), and `<repo>-prod` (production).
 
-| Step      | Creates                                                                                                                                                                  | Vercel env vars                                                                      |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `vercel`  | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link (`.vercel/project.json` only; `.vercel` must be git-ignored)                     | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                                           |
-| `neon`    | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration (guided connect) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production, once connected) |
-| `r2`      | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                                              | `R2_*`                                                                               |
-| `upstash` | `<repo>-dev`/`-prod` teams                                                                                                                                               | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups))              |
-| `resend`  | sending-only keys (any verified domain)                                                                                                                                  | `RESEND_API_KEY`                                                                     |
-| `reports` | report tokens from the factory's receiver                                                                                                                                | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                                       |
-| `secrets` | the secrets named with `--secret` (generated, never shown)                                                                                                               | those, plus `AUTH_EMAIL_FROM` when a sender is known                                 |
-| `domain`  | attaches `--domain` to the project                                                                                                                                       | —                                                                                    |
+| Step         | Creates                                                                                                                                                                  | Vercel env vars                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `vercel`     | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link (`.vercel/project.json` only; `.vercel` must be git-ignored)                     | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                                                        |
+| `neon`       | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration (guided connect) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production, once connected)              |
+| `ai-gateway` | Vercel AI Gateway keys `<repo>` and `<repo>-dev` on the factory's team (spend billed per project)                                                                        | `AI_GATEWAY_API_KEY`: `<repo>` in Production and Preview (Sensitive), `<repo>-dev` in Development |
+| `r2`         | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                                              | `R2_*`                                                                                            |
+| `upstash`    | `<repo>-dev`/`-prod` teams                                                                                                                                               | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups))                           |
+| `resend`     | sending-only keys (any verified domain)                                                                                                                                  | `RESEND_API_KEY`                                                                                  |
+| `reports`    | report tokens from the factory's receiver                                                                                                                                | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                                                    |
+| `secrets`    | the secrets named with `--secret` (generated, never shown)                                                                                                               | those, plus `AUTH_EMAIL_FROM` when a sender is known                                              |
+| `domain`     | attaches `--domain` to the project                                                                                                                                       | —                                                                                                 |
 
 - **Environments.** Pre-production values go to Development, Preview, and `test`; production values
   go to Production and are Sensitive. Each side gets its own keys and secrets.
+- **AI Gateway** keys split by who spends instead: deployments (Production and Preview, Sensitive)
+  on `<repo>`, local and agent runs on `<repo>-dev` (Development; plain encrypted, since
+  Development cannot hold Sensitive values and `provision env` pulls it). `test` gets none:
+  end-to-end suites should not call the paid Gateway. A key's value is readable only when it is
+  created, so it goes straight to Vercel and is never printed. An `AI_GATEWAY_API_KEY` set while no
+  key of that name exists counts as an existing key (`--on-existing`; only `overwrite` fills a
+  partial one). Key names share the team's namespace: a repository named `<repo>-dev` on the same
+  team would collide with this one's development key. Repositories that declare no
+  `provision.factory.steps` get this step too; apps that do not use AI Gateway should list their
+  steps.
 - **`--domain`** is the production host. The `r2` step allows browser uploads to the production
   bucket only from `https://<domain>`; the development bucket accepts any origin.
 - **`--email-from`** sets `AUTH_EMAIL_FROM` (`"<sender-name> <address>"`), defaulting to
@@ -301,7 +313,9 @@ after a new sandbox profile, otherwise an env-file refresh (`--skip-install --sk
 | `abort`     | run fails                       | run fails                                         | run fails                                             |
 
 `provision` never deletes data. A key whose value is missing from Vercel cannot be reused; rerun
-with `--on-existing overwrite --only <step>` to rotate it.
+with `--on-existing overwrite --only <step>` to rotate it. A key that already exists by name is never
+created twice; rotation creates the replacement under the same name, writes Vercel, then deletes the
+old key by id.
 
 ```bash
 provision factory --checkout ~/src/acme-app --domain app.acme.com --only resend --on-existing overwrite
@@ -427,7 +441,7 @@ steps 4–6 and their path checks, skips the install when there is no lockfile, 
 add new variables to the Vercel project and pull again rather than editing `.env.local`:
 
 ```bash
-vercel env add AI_GATEWAY_API_KEY development      # prompts for the value
+vercel env add SOME_API_KEY development           # prompts for the value
 vercel env add SOME_FLAG test --value on --yes     # the custom e2e environment
 provision env --skip-install --skip-setup          # refresh .env.local and .env.test
 ```

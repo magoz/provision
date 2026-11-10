@@ -91,10 +91,10 @@ Sensitive values.
   commit, or the chat.
 - **Non-secret config** (URLs, feature flags, thresholds): you may run
   `vercel env add <KEY> <environment> --value <value> --yes` yourself.
-- **Variables `provision factory` manages** (`DATABASE_URL*`, `SANDBOX_DB_*`, `R2_*`, `QSTASH_*`,
-  `RESEND_API_KEY`, `REPORT_RECEIVER_*`, `BETTER_AUTH_SECRET`, `INTEGRATION_CREDENTIAL_ENCRYPTION_KEY`,
-  `CRON_SECRET`, `VAPID_*`, `AUTH_EMAIL_FROM`, `AI_PROVIDER_USAGE_ALERT_THRESHOLDS`,
-  `ALLOW_E2E_DATABASE_RESET`): don't edit them by hand. Have the human rerun the step, e.g.
+- **Variables `provision factory` manages** (`DATABASE_URL*`, `SANDBOX_DB_*`, `AI_GATEWAY_API_KEY`,
+  `R2_*`, `QSTASH_*`, `RESEND_API_KEY`, `REPORT_RECEIVER_*`, `BETTER_AUTH_SECRET`,
+  `INTEGRATION_CREDENTIAL_ENCRYPTION_KEY`, `CRON_SECRET`, `VAPID_*`, `AUTH_EMAIL_FROM`,
+  `AI_PROVIDER_USAGE_ALERT_THRESHOLDS`, `ALLOW_E2E_DATABASE_RESET`): don't edit them by hand. Have the human rerun the step, e.g.
   `--only resend --on-existing overwrite` to rotate a key.
 - Deployments only see variables added before they were built; redeploy to pick up a change.
 
@@ -138,13 +138,14 @@ Don't assume a template: read the code, then compare with Vercel.
    | The code reads…                                                        | Comes from                                                                                                                                                                             |
    | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
    | `DATABASE_URL*` (Neon)                                                 | `neon` step (Production); Preview databases come from Neon's Vercel integration, connected once by the human (the step waits for them to confirm; otherwise relay the `manual:` lines) |
+   | `AI_GATEWAY_API_KEY` (Vercel AI Gateway)                               | `ai-gateway` step: keys `<repo>` (Production, Preview; Sensitive) and `<repo>-dev` (Development); none in `test`                                                                       |
    | `R2_*` (S3-compatible storage)                                         | `r2` step (needs `--domain` for the upload origin)                                                                                                                                     |
    | `QSTASH_*`                                                             | `upstash` step (the human pastes the console's `.env` block)                                                                                                                           |
    | `RESEND_API_KEY`                                                       | `resend` step                                                                                                                                                                          |
    | `AUTH_EMAIL_FROM`                                                      | `--email-from` (domain verified in the factory's Resend)                                                                                                                               |
    | `REPORT_RECEIVER_*`                                                    | `reports` step (factories with a receiver)                                                                                                                                             |
    | a random secret the app generates itself (auth, cron, encryption keys) | `--secret NAME[=FORMAT]`                                                                                                                                                               |
-   | a third-party key (AI Gateway, OAuth apps, data APIs)                  | the human, with `vercel env add`                                                                                                                                                       |
+   | a third-party key (OAuth apps, data APIs)                              | the human, with `vercel env add`                                                                                                                                                       |
    | plain config (URLs, limits, flags)                                     | you, with `vercel env add … --value … --yes`                                                                                                                                           |
 
    `--secret` formats: `NAME` (32 random bytes, base64), `NAME=base64-<bytes>`,
@@ -156,6 +157,8 @@ Don't assume a template: read the code, then compare with Vercel.
    plus `domain` when the production host is known. Leave out steps the app doesn't use.
 5. **Check conflicts** before handing over: a step stops if one Vercel record of its variable spans
    pre-production and production (`… has a record that also targets environments outside …`).
+   `AI_GATEWAY_API_KEY` splits differently: Production with Preview is fine, but one record
+   spanning Development and Preview or Production stops it.
    Tell the human which record to delete or split first.
 
 Then show the human what you found (variables, where each comes from, what already exists) and
@@ -164,7 +167,7 @@ the commands, in order:
 ```bash
 # 1. Plan: reads providers, changes nothing
 provision factory --checkout <checkout> --domain <production-host> \
-  --only vercel,neon,resend,secrets,domain \
+  --only vercel,neon,ai-gateway,resend,secrets,domain \
   --sender-name <App name> --email-from login@<verified-domain> \
   --secret BETTER_AUTH_SECRET --secret CRON_SECRET=hex-32 --dry-run
 

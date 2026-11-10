@@ -196,7 +196,7 @@ export interface EnvGroup {
 }
 
 /** Development + Preview + `test` vs Production, plus single-target groups. */
-export const envGroups = (handle: ProjectHandle) => {
+export const envGroups = (handle: Pick<ProjectHandle, 'testEnvironmentId'>) => {
   const test = handle.testEnvironmentId === undefined ? [] : [handle.testEnvironmentId]
 
   return {
@@ -206,6 +206,11 @@ export const envGroups = (handle: ProjectHandle) => {
       customEnvironmentIds: test
     },
     production: { label: 'Production', target: ['production'], customEnvironmentIds: [] },
+    deployed: {
+      label: 'Production, Preview',
+      target: ['production', 'preview'],
+      customEnvironmentIds: []
+    },
     development: { label: 'Development', target: ['development'], customEnvironmentIds: [] },
     test: { label: 'test', target: [], customEnvironmentIds: test },
     all: {
@@ -240,6 +245,20 @@ export const groupHasKeys = (
   group: EnvGroup,
   keys: ReadonlyArray<string>
 ) => keys.every(key => records.some(record => record.key === key && covers(record, group)))
+
+/**
+ * Whether every environment of the group has every key, from one record or from one per
+ * environment (as `vercel env add` writes them).
+ */
+export const environmentsHaveKeys = (
+  records: ReadonlyArray<EnvRecord>,
+  group: EnvGroup,
+  keys: ReadonlyArray<string>
+) =>
+  [
+    ...group.target.map(target => ({ label: target, target: [target], customEnvironmentIds: [] })),
+    ...group.customEnvironmentIds.map(id => ({ label: id, target: [], customEnvironmentIds: [id] }))
+  ].every(environment => groupHasKeys(records, environment, keys))
 
 /** Whether the group has every key everywhere (`complete`), some of it (`partial`), or none. */
 export const groupKeyState = (
