@@ -5,6 +5,7 @@ import { Data, Effect, FileSystem, Path, Predicate, Schema } from 'effect'
 export const factorySteps = [
   'vercel',
   'neon',
+  'ai-gateway',
   'r2',
   'upstash',
   'resend',

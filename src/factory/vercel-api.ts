@@ -302,6 +302,80 @@ export const deleteEnvRecord = (teamId: string, projectId: string, recordId: str
   ).pipe(Effect.asVoid)
 
 // ---------------------------------------------------------------------------
+// AI Gateway API keys (the endpoints `vercel ai-gateway api-keys` uses)
+// ---------------------------------------------------------------------------
+
+const GatewayKey = Schema.Struct({ id: Schema.String, name: Schema.String, purpose: Schema.String })
+
+export type GatewayKey = typeof GatewayKey.Type
+
+const GatewayKeyList = Schema.Struct({
+  apiKeys: Schema.Array(GatewayKey),
+  pagination: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        next: Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number])))
+      })
+    )
+  )
+})
+
+/** Every AI Gateway key of the team, across pages. */
+export const listGatewayKeys = (teamId: string) =>
+  Effect.gen(function* () {
+    const keys: Array<GatewayKey> = []
+    const seen = new Set<string>()
+    let until: string | undefined
+
+    do {
+      const query = new URLSearchParams({ purpose: 'ai-gateway', limit: '100' })
+
+      if (until !== undefined) query.set('until', until)
+
+      const value = yield* vercelApi(
+        teamId,
+        'AI Gateway key listing',
+        `/v1/api-keys?${query.toString()}`
+      ).pipe(Effect.flatMap(found => required('AI Gateway key listing', found)))
+
+      const page = yield* decode('AI Gateway key listing', GatewayKeyList, value)
+      keys.push(...page.apiKeys.filter(key => key.purpose === 'ai-gateway'))
+      const next = page.pagination?.next
+      until = next === undefined || next === null ? undefined : String(next)
+
+      if (until !== undefined && seen.has(until)) {
+        return yield* new ProviderError({ message: 'Vercel AI Gateway key pagination cycled' })
+      }
+
+      if (until !== undefined) seen.add(until)
+    } while (until !== undefined)
+
+    return keys
+  })
+
+/** `apiKeyString` is readable only in this response; it never leaves a `Redacted`. */
+const CreatedGatewayKey = Schema.Struct({
+  apiKeyString: Schema.NonEmptyString,
+  apiKey: Schema.Struct({ id: Schema.String })
+})
+
+/** A team-wide key (any project), like `vercel ai-gateway api-keys create`. */
+export const createGatewayKey = (teamId: string, name: string) =>
+  vercelApi(teamId, 'AI Gateway key creation', '/v1/api-keys', {
+    method: 'POST',
+    body: { purpose: 'ai-gateway', name }
+  }).pipe(
+    Effect.flatMap(value => required('AI Gateway key creation', value)),
+    Effect.flatMap(value => decode('AI Gateway key creation', CreatedGatewayKey, value)),
+    Effect.map(created => ({ id: created.apiKey.id, token: Redacted.make(created.apiKeyString) }))
+  )
+
+export const deleteGatewayKey = (teamId: string, keyId: string) =>
+  vercelApi(teamId, 'AI Gateway key deletion', `/v1/api-keys/${encodeURIComponent(keyId)}`, {
+    method: 'DELETE'
+  }).pipe(Effect.asVoid)
+
+// ---------------------------------------------------------------------------
 // domains
 // ---------------------------------------------------------------------------
 

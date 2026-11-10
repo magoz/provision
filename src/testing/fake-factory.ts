@@ -26,6 +26,8 @@ export interface FakeWorld {
     readonly domains: Map<string, Array<string>>
     /** Installed integrations; `projects: null` means access to every project. */
     readonly integrations: Array<{ id: string; slug: string; projects: Array<string> | null }>
+    /** The team's API keys; `value` is what creation returned once. */
+    readonly apiKeys: Array<{ id: string; name: string; purpose: string; value: string }>
   }
   readonly neon: {
     readonly projects: Array<{
@@ -56,7 +58,8 @@ export const makeWorld = (): FakeWorld => ({
     customEnvironments: new Map(),
     envs: new Map(),
     domains: new Map(),
-    integrations: [{ id: 'icfg_neon', slug: 'neon', projects: null }]
+    integrations: [{ id: 'icfg_neon', slug: 'neon', projects: null }],
+    apiKeys: []
   },
   neon: { projects: [], apiKeys: [] },
   cloudflare: { buckets: new Map(), tokens: [] },
@@ -113,6 +116,41 @@ const vercelApi = (world: FakeWorld, invocation: Invocation): ScriptResult => {
     const slug = url.searchParams.get('integrationIdOrSlug')
 
     return ok(world.vercel.integrations.filter(configuration => configuration.slug === slug))
+  }
+
+  if (path === '/api-keys' && method === 'GET') {
+    // Pages of at most two keys, so callers must follow `next`.
+    const start = Number(url.searchParams.get('until') ?? '0')
+    const size = Math.min(Number(url.searchParams.get('limit') ?? '20'), 2)
+    const matching = world.vercel.apiKeys.filter(
+      key => key.purpose === url.searchParams.get('purpose')
+    )
+    const next = start + size < matching.length ? String(start + size) : null
+
+    return ok({
+      apiKeys: matching.slice(start, start + size).map(({ value: _value, ...key }) => key),
+      pagination: { count: Math.min(size, matching.length - start), next, prev: null }
+    })
+  }
+
+  if (path === '/api-keys' && method === 'POST') {
+    const id = nextId('key')
+    const key = { id, name: text(body, 'name'), purpose: text(body, 'purpose'), value: `vck_${id}` }
+    world.vercel.apiKeys.push(key)
+
+    return ok({ apiKeyString: key.value, apiKey: { id, name: key.name, purpose: key.purpose } })
+  }
+
+  const apiKey = /^\/api-keys\/([^/]+)$/.exec(path)?.[1]
+
+  if (apiKey !== undefined && method === 'DELETE') {
+    const index = world.vercel.apiKeys.findIndex(key => key.id === apiKey)
+
+    if (index < 0) return missing
+
+    world.vercel.apiKeys.splice(index, 1)
+
+    return ok({})
   }
 
   if (path === '/projects' && method === 'POST') {
