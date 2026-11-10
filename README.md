@@ -244,8 +244,10 @@ checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Ver
   on `<repo>`, local and agent runs on `<repo>-dev` (Development; plain encrypted, since
   Development cannot hold Sensitive values and `provision env` pulls it). `test` gets none:
   end-to-end suites should not call the paid Gateway. A key's value is readable only when it is
-  created, so it goes straight to Vercel and is never printed. An `AI_GATEWAY_API_KEY` set from a
-  key with another name counts as an existing key (`--on-existing`). Repositories that declare no
+  created, so it goes straight to Vercel and is never printed. An `AI_GATEWAY_API_KEY` set while no
+  key of that name exists counts as an existing key (`--on-existing`; only `overwrite` fills a
+  partial one). Key names share the team's namespace: a repository named `<repo>-dev` on the same
+  team would collide with this one's development key. Repositories that declare no
   `provision.factory.steps` get this step too; apps that do not use AI Gateway should list their
   steps.
 - **`--domain`** is the production host. The `r2` step allows browser uploads to the production

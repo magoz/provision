@@ -1336,10 +1336,15 @@ describe('provision factory ai-gateway', () => {
       addRecords(world, [
         { key: gatewayVariable, target: ['preview', 'development'], value: 'vck_elsewhere' }
       ])
+      const before = world.mutations.length
 
-      yield* run('--on-existing', 'abort', '--only', 'ai-gateway')
+      yield* run('--on-existing', 'overwrite', '--only', 'ai-gateway')
 
       expect(process.exitCode).toBe(2)
+      const mutations = world.mutations.slice(before)
+      expect(mutations[0]).toBe('vercel POST /api-keys')
+      expect(mutations[1]).toMatch(/^vercel DELETE \/api-keys\/key_\d+$/)
+      expect(mutations).toHaveLength(2)
       expect(world.vercel.apiKeys).toEqual([])
       expect(recordFor(world, gatewayVariable, 'preview')[0]?.value).toBe('vck_elsewhere')
     })
@@ -1374,10 +1379,17 @@ describe('provision factory ai-gateway', () => {
       ])
       const before = world.mutations.length
 
-      yield* run('--on-existing', 'abort', '--only', 'ai-gateway')
-      expect(process.exitCode).toBe(2)
+      // Preview lacks it and its key is unknown: only overwrite can complete it.
+      for (const policy of ['abort', 'reuse']) {
+        process.exitCode = undefined
+        yield* run('--on-existing', policy, '--only', 'ai-gateway')
+        expect(process.exitCode).toBe(2)
+      }
       expect(world.mutations.slice(before)).toEqual([])
 
+      addRecords(world, [
+        { key: gatewayVariable, target: ['preview'], value: 'vck_other', type: 'sensitive' }
+      ])
       process.exitCode = undefined
       const reused = yield* output('--on-existing', 'reuse', '--only', 'ai-gateway')
       expect(process.exitCode).toBeUndefined()
@@ -1391,7 +1403,7 @@ describe('provision factory ai-gateway', () => {
 
       yield* run('--on-existing', 'overwrite', '--only', 'ai-gateway')
       expect(process.exitCode).toBeUndefined()
-      expect(recordFor(world, gatewayVariable, 'production')).toEqual([
+      expect(recordFor(world, gatewayVariable, 'preview')).toEqual([
         expect.objectContaining({
           target: ['production', 'preview'],
           value: gatewayKey(world, 'acme-app')[0]?.value

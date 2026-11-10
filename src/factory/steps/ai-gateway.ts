@@ -21,14 +21,14 @@ import {
 const variableKey = 'AI_GATEWAY_API_KEY'
 
 /** The key named `name`; two keys share a name only while a rotation is unfinished. */
-const keyNamed = (keys: ReadonlyArray<GatewayKey>, name: string) => {
+const keyIdNamed = (keys: ReadonlyArray<GatewayKey>, name: string) => {
   const matches = keys.filter(key => key.name === name)
 
   return matches.length > 1
     ? Effect.fail(
         factoryError(
-          `several AI Gateway keys are named ${name}, left by an unfinished rotation; ` +
-            'keep the newest and remove the others by id (vercel ai-gateway api-keys ls)'
+          `several AI Gateway keys are named ${name} (an interrupted rotation); remove all but one ` +
+            'by id (vercel ai-gateway api-keys ls), then rerun with --on-existing overwrite to replace it'
         )
       )
     : Effect.succeed(Option.map(Option.fromUndefinedOr(matches[0]), key => key.id))
@@ -67,7 +67,7 @@ export const aiGatewayStep = (context: FactoryContext) =>
 
     for (const target of targets(envGroups(handle.value))) {
       const description = describeKey(target)
-      const existing = yield* keyNamed(keys, target.name)
+      const existing = yield* keyIdNamed(keys, target.name)
 
       // A variable set from some other key: replacing it moves the spend, so it is the
       // operator's call like any existing key.
@@ -82,6 +82,12 @@ export const aiGatewayStep = (context: FactoryContext) =>
         )
 
         if (decision === 'reuse') {
+          if (!context.dryRun && !environmentsHaveKeys(records, target.group, [variableKey])) {
+            return yield* factoryError(
+              `${variableKey} is missing from part of ${target.group.label} and its key is unknown; rerun with --on-existing=overwrite to create ${target.name}`
+            )
+          }
+
           yield* Console.log(`  reusing ${variableKey} in ${target.group.label}`)
 
           continue
@@ -97,7 +103,17 @@ export const aiGatewayStep = (context: FactoryContext) =>
 
           yield* writeGroup(context, handle.value, target.group, [
             { key: variableKey, value: key.token, type: target.type }
-          ]).pipe(Effect.tapError(() => deleteGatewayKey(teamId, key.id).pipe(Effect.ignore)))
+          ]).pipe(
+            Effect.tapError(() =>
+              deleteGatewayKey(teamId, key.id).pipe(
+                Effect.catch(() =>
+                  Console.log(
+                    `  manual: remove AI Gateway key ${target.name} (${key.id}): Vercel refused its variable and the removal failed`
+                  )
+                )
+              )
+            )
+          )
         }),
         remove: id => deleteGatewayKey(teamId, id)
       })
