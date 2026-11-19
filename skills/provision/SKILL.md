@@ -154,7 +154,9 @@ Don't assume a template: read the code, then compare with Vercel.
    `base64-32`).
 
 4. **Pick the steps** with `--only`: `vercel` always, plus the steps whose variables the code reads,
-   plus `domain` when the production host is known. Leave out steps the app doesn't use.
+   plus `domain` when the production host is known. Leave out steps the app doesn't use. The
+   `vercel` step also puts the project's functions and sandboxes in Frankfurt (`fra1`), moving an
+   existing project there; tell the human to redeploy for running deployments to follow.
 5. **Check conflicts** before handing over: a step stops if one Vercel record of its variable spans
    pre-production and production (`… has a record that also targets environments outside …`).
    `AI_GATEWAY_API_KEY` splits differently: Production with Preview is fine, but one record

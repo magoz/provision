@@ -83,10 +83,65 @@ export const VercelProject = Schema.Struct({
         repo: Schema.optional(Schema.String)
       })
     )
+  ),
+  resourceConfig: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({ functionDefaultRegions: Schema.optional(Schema.Array(Schema.String)) })
+    )
+  ),
+  sandbox: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        region: Schema.optional(Schema.String),
+        failoverRegions: Schema.optional(Schema.Array(Schema.String))
+      })
+    )
   )
 })
 
 export type VercelProject = typeof VercelProject.Type
+
+/**
+ * Frankfurt, beside the Neon projects (`neonRegion`): functions run only here and sandboxes start
+ * here. Vercel's default for both is `iad1`.
+ */
+export const vercelRegion = 'fra1'
+
+/** Project settings that put functions and sandboxes in `vercelRegion`. */
+export interface RegionUpdate {
+  readonly resourceConfig?: { readonly functionDefaultRegions: ReadonlyArray<string> }
+  readonly sandbox?: {
+    readonly region: string
+    readonly failoverRegions: ReadonlyArray<string>
+  }
+}
+
+/**
+ * What a project needs to run in `vercelRegion`, or `undefined` when it already does. Sandbox
+ * failover regions are kept, minus `vercelRegion` itself, which Vercel refuses as a failover of
+ * the primary region.
+ */
+export const regionUpdate = (project: VercelProject): RegionUpdate | undefined => {
+  const functions = project.resourceConfig?.functionDefaultRegions ?? []
+  const sandbox = project.sandbox
+  const update: RegionUpdate = {
+    ...(functions.length === 1 && functions[0] === vercelRegion
+      ? {}
+      : { resourceConfig: { functionDefaultRegions: [vercelRegion] } }),
+    ...(sandbox?.region === vercelRegion
+      ? {}
+      : {
+          sandbox: {
+            region: vercelRegion,
+            failoverRegions: (sandbox?.failoverRegions ?? []).filter(
+              region => region !== vercelRegion
+            )
+          }
+        })
+  }
+
+  return update.resourceConfig === undefined && update.sandbox === undefined ? undefined : update
+}
 
 /** `owner/repo` of a project's Git link, when linked to GitHub. */
 export const linkedRepository = (project: VercelProject) => {
@@ -118,7 +173,9 @@ export const createProject = (
       name: options.name,
       framework: 'nextjs',
       gitRepository: { type: 'github', repo: options.repository },
-      ...(options.rootDirectory === '.' ? {} : { rootDirectory: options.rootDirectory })
+      ...(options.rootDirectory === '.' ? {} : { rootDirectory: options.rootDirectory }),
+      resourceConfig: { functionDefaultRegions: [vercelRegion] },
+      sandbox: { region: vercelRegion }
     }
   }).pipe(
     Effect.flatMap(value => required('project creation', value)),
@@ -129,6 +186,13 @@ export const setRootDirectory = (teamId: string, projectId: string, rootDirector
   vercelApi(teamId, 'project update', `/v9/projects/${encodeURIComponent(projectId)}`, {
     method: 'PATCH',
     body: { rootDirectory: rootDirectory === '.' ? null : rootDirectory }
+  }).pipe(Effect.asVoid)
+
+/** Vercel merges `resourceConfig` and keeps its other settings (Fluid, build machine). */
+export const setRegions = (teamId: string, projectId: string, update: RegionUpdate) =>
+  vercelApi(teamId, 'project region update', `/v9/projects/${encodeURIComponent(projectId)}`, {
+    method: 'PATCH',
+    body: update
   }).pipe(Effect.asVoid)
 
 // ---------------------------------------------------------------------------

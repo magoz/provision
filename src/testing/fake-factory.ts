@@ -2,14 +2,23 @@ import { Effect, Layer, Predicate } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import type { Invocation, ScriptResult } from './scripted-process.ts'
 
+export interface FakeVercelProject {
+  id: string
+  name: string
+  repo: string
+  rootDirectory: string | null
+  functionRegions: ReadonlyArray<string>
+  sandbox: { region: string; failoverRegions: ReadonlyArray<string> }
+}
+
+/** Vercel's region for a project created without one. */
+export const vercelDefaultRegion = 'iad1'
+
 /** In-memory providers behind every factory step: Vercel (via `vercel api`) and HTTP APIs. */
 export interface FakeWorld {
   readonly mutations: Array<string>
   readonly vercel: {
-    readonly projects: Map<
-      string,
-      { id: string; name: string; repo: string; rootDirectory: string | null }
-    >
+    readonly projects: Map<string, FakeVercelProject>
     readonly customEnvironments: Map<string, Array<{ id: string; slug: string }>>
     readonly envs: Map<
       string,
@@ -99,6 +108,42 @@ const strings = (value: unknown): ReadonlyArray<string> =>
 // Vercel through the scripted `vercel` CLI
 // ---------------------------------------------------------------------------
 
+const projectPayload = (project: FakeVercelProject) => {
+  const [owner, repo] = project.repo.split('/')
+
+  return {
+    id: project.id,
+    name: project.name,
+    rootDirectory: project.rootDirectory,
+    link: { type: 'github', org: owner, repo },
+    resourceConfig: { fluid: true, functionDefaultRegions: project.functionRegions },
+    sandbox: project.sandbox
+  }
+}
+
+/**
+ * Applies a create or PATCH body's regions the way Vercel does: `resourceConfig` merges, `sandbox`
+ * replaces (an omitted `failoverRegions` clears them), and a failover equal to the region is
+ * refused. Returns whether the body was accepted.
+ */
+const applyRegions = (project: FakeVercelProject, body: unknown) => {
+  const sandbox = field(body, 'sandbox')
+  const region = text(sandbox, 'region') || vercelDefaultRegion
+  const failoverRegions = strings(field(sandbox, 'failoverRegions'))
+
+  if (failoverRegions.includes(region)) return false
+
+  const functions = strings(field(field(body, 'resourceConfig'), 'functionDefaultRegions'))
+
+  if (functions.length > 0) project.functionRegions = functions
+
+  if (sandbox !== undefined) project.sandbox = { region, failoverRegions }
+
+  return true
+}
+
+const badRequest: ScriptResult = { exitCode: 1, stderr: 'Error: Bad Request (400)' }
+
 const vercelApi = (world: FakeWorld, invocation: Invocation): ScriptResult => {
   const args = invocation.args
   const url = new URL(args[1] ?? '', 'https://api.vercel.com')
@@ -159,34 +204,35 @@ const vercelApi = (world: FakeWorld, invocation: Invocation): ScriptResult => {
   }
 
   if (path === '/projects' && method === 'POST') {
-    const created = {
+    const created: FakeVercelProject = {
       id: nextId('prj'),
       name: text(body, 'name'),
       repo: text(field(body, 'gitRepository'), 'repo'),
-      rootDirectory: text(body, 'rootDirectory') || null
+      rootDirectory: text(body, 'rootDirectory') || null,
+      functionRegions: [vercelDefaultRegion],
+      sandbox: { region: vercelDefaultRegion, failoverRegions: [] }
     }
+    if (!applyRegions(created, body)) return badRequest
+
     world.vercel.projects.set(created.id, created)
 
-    return ok({ id: created.id, name: created.name, rootDirectory: created.rootDirectory })
+    return ok(projectPayload(created))
   }
 
   if (found === undefined) return missing
 
   const rest = path.replace(/^\/projects\/[^/]+/, '')
-  const [owner, repo] = found.repo.split('/')
-  const projectPayload = {
-    id: found.id,
-    name: found.name,
-    rootDirectory: found.rootDirectory,
-    link: { type: 'github', org: owner, repo }
-  }
 
-  if (rest === '' && method === 'GET') return ok(projectPayload)
+  if (rest === '' && method === 'GET') return ok(projectPayload(found))
 
   if (rest === '' && method === 'PATCH') {
-    found.rootDirectory = text(body, 'rootDirectory') || null
+    if (!applyRegions(found, body)) return badRequest
 
-    return ok(projectPayload)
+    if (Predicate.hasProperty(body, 'rootDirectory')) {
+      found.rootDirectory = text(body, 'rootDirectory') || null
+    }
+
+    return ok(projectPayload(found))
   }
 
   if (rest === '/custom-environments') {

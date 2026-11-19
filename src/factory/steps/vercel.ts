@@ -17,7 +17,10 @@ import {
   createProject,
   linkedRepository,
   listEnvRecords,
-  setRootDirectory
+  regionUpdate,
+  setRegions,
+  setRootDirectory,
+  vercelRegion
 } from '../vercel-api.ts'
 import { findProject } from '../context.ts'
 
@@ -27,8 +30,9 @@ const resetConsentKey = 'ALLOW_E2E_DATABASE_RESET'
 const LinkedProject = Schema.fromJsonString(Schema.Struct({ projectId: Schema.String }))
 
 /**
- * Vercel project `<repo>` linked to the GitHub repository (Root Directory = `provision.appDir`),
- * its custom `test` environment, the `test`-only reset consent, and the checkout's link.
+ * Vercel project `<repo>` linked to the GitHub repository (Root Directory = `provision.appDir`,
+ * functions and sandboxes in `vercelRegion`), its custom `test` environment, the `test`-only reset
+ * consent, and the checkout's link.
  */
 export const vercelStep = (context: FactoryContext) =>
   Effect.gen(function* () {
@@ -61,10 +65,27 @@ export const vercelStep = (context: FactoryContext) =>
           setRootDirectory(teamId, found.value.project.id, context.repoConfig.appDir)
         )
       }
+
+      const regions = regionUpdate(found.value.project)
+
+      if (regions !== undefined) {
+        const moves = [
+          ...(regions.resourceConfig === undefined
+            ? []
+            : [`run functions only in ${vercelRegion}`]),
+          ...(regions.sandbox === undefined ? [] : [`start sandboxes in ${vercelRegion}`])
+        ]
+
+        yield* mutate(
+          context,
+          moves.join(' and '),
+          setRegions(teamId, found.value.project.id, regions)
+        )
+      }
     } else {
       const created = yield* mutate(
         context,
-        `create Vercel project ${context.names.project} linked to ${context.checkout.repository}`,
+        `create Vercel project ${context.names.project} linked to ${context.checkout.repository} (${vercelRegion})`,
         createProject(teamId, {
           name: context.names.project,
           repository: context.checkout.repository,

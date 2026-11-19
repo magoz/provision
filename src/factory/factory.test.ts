@@ -8,6 +8,7 @@ import {
   factoryScript,
   fakeProvidersLayer,
   makeWorld,
+  type FakeVercelProject,
   type FakeWorld
 } from '../testing/fake-factory.ts'
 import { scriptedProcessLayer, type Invocation } from '../testing/scripted-process.ts'
@@ -241,7 +242,9 @@ describe('provision factory', () => {
       expect(project).toMatchObject({
         name: 'acme-app',
         repo: 'acme/acme-app',
-        rootDirectory: null
+        rootDirectory: null,
+        functionRegions: ['fra1'],
+        sandbox: { region: 'fra1', failoverRegions: [] }
       })
 
       const testEnvironment = world.vercel.customEnvironments.get(project?.id ?? '')?.[0]
@@ -1039,6 +1042,60 @@ describe('provision factory', () => {
       expect(recordFor(world, 'SANDBOX_DB_PARENT_BRANCH_ID', 'development')[0]?.value).toBe(
         'br-dev'
       )
+    })
+  )
+
+  it.live('moves an existing project to fra1, keeping its other sandbox failovers', () =>
+    Effect.gen(function* () {
+      const { world, run, output } = yield* setup()
+      const existing: FakeVercelProject = {
+        id: 'prj_existing',
+        name: 'acme-app',
+        repo: 'acme/acme-app',
+        rootDirectory: null,
+        functionRegions: ['iad1', 'fra1'],
+        sandbox: { region: 'iad1', failoverRegions: ['fra1', 'cdg1'] }
+      }
+      world.vercel.projects.set(existing.id, existing)
+
+      const planned = yield* output('--only', 'vercel', '--dry-run')
+      expect(planned).toContain('would run functions only in fra1 and start sandboxes in fra1')
+      expect(world.mutations).toEqual([])
+
+      yield* run('--only', 'vercel', '--on-existing', 'reuse')
+
+      expect(process.exitCode).toBeUndefined()
+      expect(world.vercel.projects.get(existing.id)).toMatchObject({
+        rootDirectory: null,
+        functionRegions: ['fra1'],
+        sandbox: { region: 'fra1', failoverRegions: ['cdg1'] }
+      })
+
+      const before = world.mutations.length
+      yield* run('--only', 'vercel', '--on-existing', 'reuse')
+      expect(world.mutations.slice(before)).toEqual([])
+    })
+  )
+
+  it.live('moves only what is outside fra1', () =>
+    Effect.gen(function* () {
+      const { world, output } = yield* setup()
+      world.vercel.projects.set('prj_existing', {
+        id: 'prj_existing',
+        name: 'acme-app',
+        repo: 'acme/acme-app',
+        rootDirectory: null,
+        functionRegions: ['fra1'],
+        sandbox: { region: 'iad1', failoverRegions: [] }
+      })
+
+      const printed = yield* output('--only', 'vercel', '--on-existing', 'reuse')
+
+      expect(printed).toContain('  start sandboxes in fra1')
+      expect(printed).not.toContain('run functions')
+      expect(world.mutations.filter(mutation => mutation.includes('PATCH'))).toEqual([
+        'vercel PATCH /projects/prj_existing'
+      ])
     })
   )
 
