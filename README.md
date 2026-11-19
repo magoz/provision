@@ -226,18 +226,24 @@ Creates what the repository declares (`provision.factory.steps`, narrowed by `--
 checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Vercel project),
 `<repo>-dev` (pre-production), and `<repo>-prod` (production).
 
-| Step         | Creates                                                                                                                                                                  | Vercel env vars                                                                                   |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| `vercel`     | project (Git link, Root Directory = `appDir`), custom `test` environment, checkout link (`.vercel/project.json` only; `.vercel` must be git-ignored)                     | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                                                        |
-| `neon`       | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration (guided connect) | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production, once connected)              |
-| `ai-gateway` | Vercel AI Gateway keys `<repo>` and `<repo>-dev` on the factory's team (spend billed per project)                                                                        | `AI_GATEWAY_API_KEY`: `<repo>` in Production and Preview (Sensitive), `<repo>-dev` in Development |
-| `r2`         | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                                              | `R2_*`                                                                                            |
-| `upstash`    | `<repo>-dev`/`-prod` teams                                                                                                                                               | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups))                           |
-| `resend`     | sending-only keys (any verified domain)                                                                                                                                  | `RESEND_API_KEY`                                                                                  |
-| `reports`    | report tokens from the factory's receiver                                                                                                                                | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                                                    |
-| `secrets`    | the secrets named with `--secret` (generated, never shown)                                                                                                               | those, plus `AUTH_EMAIL_FROM` when a sender is known                                              |
-| `domain`     | attaches `--domain` to the project                                                                                                                                       | —                                                                                                 |
+| Step         | Creates                                                                                                                                                                                 | Vercel env vars                                                                                   |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `vercel`     | project (Git link, Root Directory = `appDir`, functions and sandboxes in `fra1`), custom `test` environment, checkout link (`.vercel/project.json` only; `.vercel` must be git-ignored) | `ALLOW_E2E_DATABASE_RESET=1` (`test` only)                                                        |
+| `neon`       | `<repo>-dev` (protected `baseline`) + project-scoped key; `<repo>-prod` (protected, 7-day history); Preview databases through Neon's Vercel integration (guided connect)                | `SANDBOX_DB_*` (Development); `DATABASE_URL(_UNPOOLED)` (Production, once connected)              |
+| `ai-gateway` | Vercel AI Gateway keys `<repo>` and `<repo>-dev` on the factory's team (spend billed per project)                                                                                       | `AI_GATEWAY_API_KEY`: `<repo>` in Production and Preview (Sensitive), `<repo>-dev` in Development |
+| `r2`         | private `<repo>-dev`/`-prod` buckets with upload CORS, bucket-scoped tokens                                                                                                             | `R2_*`                                                                                            |
+| `upstash`    | `<repo>-dev`/`-prod` teams                                                                                                                                                              | `QSTASH_*`, pasted by you (see [Manual follow-ups](#manual-follow-ups))                           |
+| `resend`     | sending-only keys (any verified domain)                                                                                                                                                 | `RESEND_API_KEY`                                                                                  |
+| `reports`    | report tokens from the factory's receiver                                                                                                                                               | `REPORT_RECEIVER_URL`, `REPORT_RECEIVER_TOKEN`                                                    |
+| `secrets`    | the secrets named with `--secret` (generated, never shown)                                                                                                                              | those, plus `AUTH_EMAIL_FROM` when a sender is known                                              |
+| `domain`     | attaches `--domain` to the project                                                                                                                                                      | —                                                                                                 |
 
+- **Regions.** Functions, sandboxes, and databases run in Frankfurt: the Vercel project's functions
+  run only in `fra1` and its sandboxes start there (Vercel's default for both is `iad1`), and Neon
+  projects are in `aws-eu-central-1`. R2 buckets take no location hint. A rerun that reuses an
+  existing project (every `--on-existing` but `abort`) moves its functions and sandboxes to `fra1`,
+  keeping its other sandbox failover regions. A deployment, Production or Preview, picks up a
+  function region change only when it is redeployed.
 - **Environments.** Pre-production values go to Development, Preview, and `test`; production values
   go to Production and are Sensitive. Each side gets its own keys and secrets.
 - **AI Gateway** keys split by who spends instead: deployments (Production and Preview, Sensitive)
@@ -311,6 +317,9 @@ after a new sandbox profile, otherwise an env-file refresh (`--skip-install --sk
 | `reuse`     | reused                          | reused                                            | reused                                                |
 | `overwrite` | reused (never replaced)         | rotated: new key, Vercel updated, old key deleted | regenerated (invalidates sessions and encrypted data) |
 | `abort`     | run fails                       | run fails                                         | run fails                                             |
+
+Under every policy but `abort`, a reused Vercel project's Root Directory and regions are still
+corrected to what the repository and `provision` expect.
 
 `provision` never deletes data. A key whose value is missing from Vercel cannot be reused; rerun
 with `--on-existing overwrite --only <step>` to rotate it. A key that already exists by name is never

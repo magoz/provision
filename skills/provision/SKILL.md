@@ -154,7 +154,10 @@ Don't assume a template: read the code, then compare with Vercel.
    `base64-32`).
 
 4. **Pick the steps** with `--only`: `vercel` always, plus the steps whose variables the code reads,
-   plus `domain` when the production host is known. Leave out steps the app doesn't use.
+   plus `domain` when the production host is known. Leave out steps the app doesn't use. The
+   `vercel` step also puts the project's functions and sandboxes in Frankfurt (`fra1`), moving an
+   existing project there; tell the human to redeploy Production (and any long-lived Preview) for
+   running deployments to follow.
 5. **Check conflicts** before handing over: a step stops if one Vercel record of its variable spans
    pre-production and production (`… has a record that also targets environments outside …`).
    `AI_GATEWAY_API_KEY` splits differently: Production with Preview is fine, but one record
@@ -200,7 +203,8 @@ Production's `DATABASE_URL`. Without a terminal it changes nothing in Vercel and
 lines with the rerun command: relay them. After connecting, relay its `manual: check the first
 Preview deployment` line.
 
-`--on-existing`: `ask` (default, prompts), `reuse` (change nothing that exists), `overwrite`
+`--on-existing`: `ask` (default, prompts), `reuse` (keep what exists; a reused Vercel project's
+Root Directory and regions are still corrected), `overwrite`
 (rotate keys and regenerate secrets: invalidates sessions and encrypted data; only on the human's
 explicit request), `abort`. Data (databases, buckets, teams) is never deleted or replaced.
 `--only <steps>` reruns a subset, e.g. `--only reports` after the factory gains a report receiver.
