@@ -84,16 +84,20 @@ export const VercelProject = Schema.Struct({
       })
     )
   ),
+  // Every project lookup decodes these, so each level tolerates null: an unexpected null must not
+  // fail steps that never read regions.
   resourceConfig: Schema.optional(
     Schema.NullOr(
-      Schema.Struct({ functionDefaultRegions: Schema.optional(Schema.Array(Schema.String)) })
+      Schema.Struct({
+        functionDefaultRegions: Schema.optional(Schema.NullOr(Schema.Array(Schema.String)))
+      })
     )
   ),
   sandbox: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
-        region: Schema.optional(Schema.String),
-        failoverRegions: Schema.optional(Schema.Array(Schema.String))
+        region: Schema.optional(Schema.NullOr(Schema.String)),
+        failoverRegions: Schema.optional(Schema.NullOr(Schema.Array(Schema.String)))
       })
     )
   )

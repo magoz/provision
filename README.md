@@ -238,11 +238,12 @@ checkout's GitHub repository `<owner>/<repo>`. Resources are named `<repo>` (Ver
 | `secrets`    | the secrets named with `--secret` (generated, never shown)                                                                                                                              | those, plus `AUTH_EMAIL_FROM` when a sender is known                                              |
 | `domain`     | attaches `--domain` to the project                                                                                                                                                      | —                                                                                                 |
 
-- **Regions.** Everything runs in Frankfurt. The Vercel project's functions run only in `fra1` and
-  its sandboxes start there (Vercel's default for both is `iad1`); Neon projects are in
-  `aws-eu-central-1`. A rerun moves an existing project's functions and sandboxes to `fra1`
-  whatever `--on-existing` says, keeping its other sandbox failover regions. A deployment picks up
-  a function region change only when it is redeployed.
+- **Regions.** Functions, sandboxes, and databases run in Frankfurt: the Vercel project's functions
+  run only in `fra1` and its sandboxes start there (Vercel's default for both is `iad1`), and Neon
+  projects are in `aws-eu-central-1`. R2 buckets take no location hint. A rerun that reuses an
+  existing project (every `--on-existing` but `abort`) moves its functions and sandboxes to `fra1`,
+  keeping its other sandbox failover regions. A deployment, Production or Preview, picks up a
+  function region change only when it is redeployed.
 - **Environments.** Pre-production values go to Development, Preview, and `test`; production values
   go to Production and are Sensitive. Each side gets its own keys and secrets.
 - **AI Gateway** keys split by who spends instead: deployments (Production and Preview, Sensitive)
@@ -316,6 +317,9 @@ after a new sandbox profile, otherwise an env-file refresh (`--skip-install --sk
 | `reuse`     | reused                          | reused                                            | reused                                                |
 | `overwrite` | reused (never replaced)         | rotated: new key, Vercel updated, old key deleted | regenerated (invalidates sessions and encrypted data) |
 | `abort`     | run fails                       | run fails                                         | run fails                                             |
+
+Under every policy but `abort`, a reused Vercel project's Root Directory and regions are still
+corrected to what the repository and `provision` expect.
 
 `provision` never deletes data. A key whose value is missing from Vercel cannot be reused; rerun
 with `--on-existing overwrite --only <step>` to rotate it. A key that already exists by name is never

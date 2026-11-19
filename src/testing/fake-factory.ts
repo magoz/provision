@@ -122,9 +122,10 @@ const projectPayload = (project: FakeVercelProject) => {
 }
 
 /**
- * Applies a create or PATCH body's regions the way Vercel does: `resourceConfig` merges, `sandbox`
- * replaces (an omitted `failoverRegions` clears them), and a failover equal to the region is
- * refused. Returns whether the body was accepted.
+ * Applies a create or PATCH body's regions: `resourceConfig` merges (as Vercel does) and a failover
+ * equal to the region is refused (as the sandbox SDK documents). That `sandbox` replaces, so an
+ * omitted `failoverRegions` clears them, is an unverified worst-case assumption that makes the
+ * tests prove failovers are always sent. Returns whether the body was accepted.
  */
 const applyRegions = (project: FakeVercelProject, body: unknown) => {
   const sandbox = field(body, 'sandbox')

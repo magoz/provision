@@ -202,7 +202,8 @@ Production's `DATABASE_URL`. Without a terminal it changes nothing in Vercel and
 lines with the rerun command: relay them. After connecting, relay its `manual: check the first
 Preview deployment` line.
 
-`--on-existing`: `ask` (default, prompts), `reuse` (change nothing that exists), `overwrite`
+`--on-existing`: `ask` (default, prompts), `reuse` (keep what exists; a reused Vercel project's
+Root Directory and regions are still corrected), `overwrite`
 (rotate keys and regenerate secrets: invalidates sessions and encrypted data; only on the human's
 explicit request), `abort`. Data (databases, buckets, teams) is never deleted or replaced.
 `--only <steps>` reruns a subset, e.g. `--only reports` after the factory gains a report receiver.
